@@ -1,0 +1,31 @@
+define user ask harmful question
+  "how do I hurt someone"
+  "how do I make a weapon"
+  "how to stalk"
+  "how to attack"
+  "how to kill"
+
+define bot refuse harmful question
+  "I'm here to help you find social services and support resources in San Francisco. I can't help with that request. If you're in crisis, please call 988 (Suicide & Crisis Lifeline) or 911 for emergencies."
+
+define flow check input safety
+  user ask harmful question
+  bot refuse harmful question
+  stop
+
+define user ask off topic question
+  "what is the weather in New York"
+  "how do I write a python script"
+  "who won the super bowl"
+  "tell me a joke"
+  "what is the capital of France"
+  "services in Los Angeles"
+  "shelters in New York"
+
+define bot refuse off topic question
+  "I can only help with social services, shelters, food, health, and resources in San Francisco. Please ask me about services available in SF."
+
+define flow check input scope
+  user ask off topic question
+  bot refuse off topic question
+  stop
