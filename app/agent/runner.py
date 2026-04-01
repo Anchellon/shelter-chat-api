@@ -1,7 +1,11 @@
 import logging
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator
 
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
+
+if TYPE_CHECKING:
+    from app.api.resume import ResumeRequest
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +23,23 @@ def _tool_status(tool_name: str, tool_input: dict) -> str:
 async def stream_agent(
     question: str,
     conversation_id: str,
+    current_time: str,
     graph,
 ) -> AsyncGenerator[dict, None]:
     """
     Streams events from the LangGraph agent. Yields typed dicts:
 
-      {"type": "text",       "content": "Here are some options..."}
-      {"type": "tool_start", "tool": "search_services", "status": "🔍 Searching for shelter..."}
-      {"type": "tool_end",   "tool": "search_services"}
-
-    Conversation history is loaded automatically by the checkpointer via thread_id.
+      {"type": "text",            "content": "..."}
+      {"type": "tool_start",      "tool": "...", "status": "..."}
+      {"type": "tool_end",        "tool": "..."}
+      {"type": "groups_identified","groups": [...]}
+      {"type": "intake_request",  "group_id": 1, "group_label": "...", "steps": [...]}
     """
     config = {"configurable": {"thread_id": conversation_id}}
     logger.info(f"stream_agent start — thread={conversation_id}, q='{question[:80]}'")
 
     async for event in graph.astream_events(
-        {"messages": [HumanMessage(content=question)]},
+        {"messages": [HumanMessage(content=question)], "current_time": current_time, "groups": [], "results": {}, "formatted": {}},
         config=config,
         version="v2",
     ):
@@ -60,3 +65,79 @@ async def stream_agent(
             tool_name = event.get("name", "unknown_tool")
             logger.info(f"Tool end: {tool_name}")
             yield {"type": "tool_end", "tool": tool_name}
+
+        elif kind == "on_chain_end" and event.get("name") == "classify_groups":
+            groups = event.get("data", {}).get("output", {}).get("groups", [])
+            if groups:
+                logger.info(f"groups_identified: {len(groups)} group(s)")
+                yield {"type": "groups_identified", "groups": groups}
+
+        elif kind == "on_chain_end" and event.get("name") == "search_per_group":
+            results = event.get("data", {}).get("output", {}).get("results", {})
+            if results:
+                logger.info(f"search_complete: {len(results)} group(s)")
+                yield {"type": "search_complete", "results": results}
+
+        elif kind == "on_chain_end" and event.get("name") == "format_results":
+            formatted = event.get("data", {}).get("output", {}).get("formatted", {})
+            if formatted:
+                logger.info(f"format_complete: {len(formatted)} group(s)")
+                yield {"type": "format_complete", "formatted": formatted}
+
+    # After stream ends, check for pending interrupts (intake HITL)
+    async for event in _drain_interrupts(graph, config):
+        yield event
+
+
+async def stream_resume(request, graph) -> AsyncGenerator[dict, None]:
+    """Resumes a graph paused at an interrupt with the user's intake answers."""
+    config = {"configurable": {"thread_id": request.conversation_id}}
+    resume_value = {"action": request.action, "answers": request.answers}
+    logger.info(f"stream_resume — thread={request.conversation_id}, action={request.action}")
+
+    async for event in graph.astream_events(Command(resume=resume_value), config=config, version="v2"):
+        kind = event["event"]
+
+        if kind == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            if isinstance(chunk.content, str) and chunk.content:
+                yield {"type": "text", "content": chunk.content}
+
+        elif kind == "on_tool_start":
+            tool_name = event.get("name", "unknown_tool")
+            tool_input = event["data"].get("input") or {}
+            yield {"type": "tool_start", "tool": tool_name, "status": _tool_status(tool_name, tool_input)}
+
+        elif kind == "on_tool_end":
+            yield {"type": "tool_end", "tool": event.get("name", "unknown_tool")}
+
+        elif kind == "on_chain_end" and event.get("name") == "classify_groups":
+            groups = event.get("data", {}).get("output", {}).get("groups", [])
+            if groups:
+                yield {"type": "groups_identified", "groups": groups}
+
+        elif kind == "on_chain_end" and event.get("name") == "search_per_group":
+            results = event.get("data", {}).get("output", {}).get("results", {})
+            if results:
+                yield {"type": "search_complete", "results": results}
+
+        elif kind == "on_chain_end" and event.get("name") == "format_results":
+            formatted = event.get("data", {}).get("output", {}).get("formatted", {})
+            if formatted:
+                yield {"type": "format_complete", "formatted": formatted}
+
+    async for event in _drain_interrupts(graph, config):
+        yield event
+
+
+async def _drain_interrupts(graph, config) -> AsyncGenerator[dict, None]:
+    """After a stream ends, emit any pending interrupt as intake_request."""
+    try:
+        state = await graph.aget_state(config)
+        for task in state.tasks:
+            for intr in getattr(task, "interrupts", []):
+                data = intr.value if hasattr(intr, "value") else intr
+                logger.info(f"intake_request interrupt: group_id={data.get('group_id')}")
+                yield {"type": "intake_request", **data}
+    except Exception as e:
+        logger.warning(f"Could not check graph state for interrupts: {e}")

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Anshul/code/projects/shelter-mcp-server/**)"
+    ]
+  }
+}

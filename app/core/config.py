@@ -7,9 +7,22 @@ class Settings(BaseSettings):
     # Server
     port: int = 3000
 
-    # Ollama
+    # Ollama (shared base URL)
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:14b"
+
+    # Per-role LLM config: provider is one of "ollama", "openai", "anthropic"
+    classifier_provider: str = "ollama"
+    classifier_model: str = "qwen2.5:7b"
+
+    intake_provider: str = "ollama"
+    intake_model: str = "qwen2.5:7b"
+
+    formatter_provider: str = "ollama"
+    formatter_model: str = "qwen2.5:7b"
+
+    # Provider API keys (only needed when provider is set to that service)
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
 
     # MCP server
     mcp_server_url: str = "http://localhost:8001/mcp"

@@ -1,10 +1,9 @@
 models:
   - type: main
-    engine: langchain
-    model: ChatOllama
+    engine: ollama
+    model: "llama3.2"
     parameters:
       base_url: "http://172.26.64.1:11434"
-      model: "llama3.2"
 
 rails:
   input:

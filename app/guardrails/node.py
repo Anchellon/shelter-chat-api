@@ -38,6 +38,9 @@ async def guardrails_node(state: MessagesState) -> dict:
             rails.generate_async(messages=[{"role": "user", "content": user_text}]),
             timeout=30.0,
         )
+        # NeMo may return a dict {'role': 'assistant', 'content': '...'} instead of a string
+        if isinstance(result, dict):
+            result = result.get("content", "")
         if result and result != user_text:
             logger.info(f"Guardrails blocked: '{user_text[:60]}'")
             return {"messages": list(messages) + [AIMessage(content=result)]}
