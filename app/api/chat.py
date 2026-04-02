@@ -43,6 +43,9 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
             elif event["type"] == "groups_identified":
                 yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
 
+            elif event["type"] == "format_complete":
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted']})}\n\n"
+
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return  # stream ends here — frontend resumes via POST /chat/resume

@@ -30,6 +30,8 @@ async def _sse_resume_generator(request: ResumeRequest, graph):
                 yield f"data: {json.dumps({'type': 'text-delta', 'delta': event['content']})}\n\n"
             elif event["type"] == "groups_identified":
                 yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
+            elif event["type"] == "format_complete":
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted']})}\n\n"
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return

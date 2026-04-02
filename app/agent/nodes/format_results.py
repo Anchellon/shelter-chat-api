@@ -1,4 +1,5 @@
 import logging
+import random
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -7,6 +8,27 @@ from app.agent.state import NavigatorState
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_INTRO_TEMPLATES = [
+    "Here's what I found{location}.",
+    "Found some options{location} that might help.",
+    "Got a few results{location} for you.",
+    "Pulled up some services{location}.",
+    "Here are some options{location}.",
+    "Found a few things{location} worth checking out.",
+]
+
+
+def _build_intro(groups: list) -> str:
+    template = random.choice(_INTRO_TEMPLATES)
+    locations = list({g["where"] for g in groups})
+    if len(locations) == 1:
+        neighborhood = locations[0].split(",")[0].strip()
+        location = " in San Francisco" if neighborhood.lower() == "san francisco" else f" near {neighborhood}"
+    else:
+        location = ""
+    return template.format(location=location)
+
 
 _SYSTEM_PROMPT = """\
 You are summarizing search results for a social services navigator.
@@ -56,16 +78,9 @@ def build_format_results_node():
             formatted[gid] = {"rationale": rationale, "service_ids": service_ids}
             logger.info(f"format_results: group {gid} → {len(service_ids)} services")
 
-        summary_lines = []
-        for group in groups:
-            gid = str(group["group_id"])
-            rationale = formatted[gid].get("rationale", "")
-            count = len(formatted[gid].get("service_ids", []))
-            summary_lines.append(f"{rationale} ({count} result{'s' if count != 1 else ''} found)")
-
         return {
             "formatted": formatted,
-            "messages": [AIMessage(content="\n\n".join(summary_lines))],
+            "messages": [AIMessage(content=_build_intro(groups))],
         }
 
     return format_results_node

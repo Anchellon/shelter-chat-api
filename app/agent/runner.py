@@ -45,13 +45,7 @@ async def stream_agent(
     ):
         kind = event["event"]
 
-        if kind == "on_chat_model_stream":
-            chunk = event["data"]["chunk"]
-            # chunk.content can be a list (tool_use blocks) — guard before yielding
-            if isinstance(chunk.content, str) and chunk.content:
-                yield {"type": "text", "content": chunk.content}
-
-        elif kind == "on_tool_start":
+        if kind == "on_tool_start":
             tool_name = event.get("name", "unknown_tool")
             tool_input = event["data"].get("input") or {}
             logger.info(f"Tool start: {tool_name}({tool_input})")
@@ -79,7 +73,12 @@ async def stream_agent(
                 yield {"type": "search_complete", "results": results}
 
         elif kind == "on_chain_end" and event.get("name") == "format_results":
-            formatted = event.get("data", {}).get("output", {}).get("formatted", {})
+            output = event.get("data", {}).get("output", {})
+            formatted = output.get("formatted", {})
+            messages = output.get("messages", [])
+            intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
+            if intro:
+                yield {"type": "text", "content": intro}
             if formatted:
                 logger.info(f"format_complete: {len(formatted)} group(s)")
                 yield {"type": "format_complete", "formatted": formatted}
@@ -98,12 +97,7 @@ async def stream_resume(request, graph) -> AsyncGenerator[dict, None]:
     async for event in graph.astream_events(Command(resume=resume_value), config=config, version="v2"):
         kind = event["event"]
 
-        if kind == "on_chat_model_stream":
-            chunk = event["data"]["chunk"]
-            if isinstance(chunk.content, str) and chunk.content:
-                yield {"type": "text", "content": chunk.content}
-
-        elif kind == "on_tool_start":
+        if kind == "on_tool_start":
             tool_name = event.get("name", "unknown_tool")
             tool_input = event["data"].get("input") or {}
             yield {"type": "tool_start", "tool": tool_name, "status": _tool_status(tool_name, tool_input)}
@@ -122,7 +116,12 @@ async def stream_resume(request, graph) -> AsyncGenerator[dict, None]:
                 yield {"type": "search_complete", "results": results}
 
         elif kind == "on_chain_end" and event.get("name") == "format_results":
-            formatted = event.get("data", {}).get("output", {}).get("formatted", {})
+            output = event.get("data", {}).get("output", {})
+            formatted = output.get("formatted", {})
+            messages = output.get("messages", [])
+            intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
+            if intro:
+                yield {"type": "text", "content": intro}
             if formatted:
                 yield {"type": "format_complete", "formatted": formatted}
 
