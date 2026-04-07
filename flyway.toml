@@ -1,0 +1,8 @@
+[environments.dev]
+url = "jdbc:postgresql://172.26.64.1:5432/sheltertech"
+user = "postgres"
+password = "mypassword"
+
+[flyway]
+environment = "dev"
+locations = ["filesystem:migrations"]

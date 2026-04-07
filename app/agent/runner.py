@@ -25,6 +25,7 @@ async def stream_agent(
     conversation_id: str,
     current_time: str,
     graph,
+    config: dict,
 ) -> AsyncGenerator[dict, None]:
     """
     Streams events from the LangGraph agent. Yields typed dicts:
@@ -35,7 +36,6 @@ async def stream_agent(
       {"type": "groups_identified","groups": [...]}
       {"type": "intake_request",  "group_id": 1, "group_label": "...", "steps": [...]}
     """
-    config = {"configurable": {"thread_id": conversation_id}}
     logger.info(f"stream_agent start — thread={conversation_id}, q='{question[:80]}'")
 
     async for event in graph.astream_events(
@@ -88,9 +88,8 @@ async def stream_agent(
         yield event
 
 
-async def stream_resume(request, graph) -> AsyncGenerator[dict, None]:
+async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, None]:
     """Resumes a graph paused at an interrupt with the user's intake answers."""
-    config = {"configurable": {"thread_id": request.conversation_id}}
     resume_value = {"action": request.action, "answers": request.answers}
     logger.info(f"stream_resume — thread={request.conversation_id}, action={request.action}")
 

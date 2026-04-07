@@ -7,7 +7,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent.runner import stream_agent
-from app.core.auth import require_api_key
+from app.core.auth import require_user
+from app.core.db import save_conversation_summary
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class ChatRequest(BaseModel):
     current_time: str | None = None      # e.g. "Monday 14:30" — sent by frontend, used as default when no "when" in query
 
 
-async def _sse_generator(question: str, conversation_id: str, current_time: str, graph):
+async def _sse_generator(question: str, conversation_id: str, current_time: str, graph, config: dict):
     msg_id = f"msg_{uuid.uuid4().hex[:8]}"
     chunk_count = 0
 
@@ -28,7 +29,7 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
 
     try:
-        async for event in stream_agent(question, conversation_id, current_time, graph):
+        async for event in stream_agent(question, conversation_id, current_time, graph, config):
             if event["type"] == "text":
                 chunk_count += 1
                 yield f"data: {json.dumps({'type': 'text-delta', 'id': msg_id, 'delta': event['content']})}\n\n"
@@ -45,6 +46,11 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
 
             elif event["type"] == "format_complete":
                 yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted']})}\n\n"
+                await save_conversation_summary(
+                    thread_id=conversation_id,
+                    user_id=config["metadata"]["user_id"],
+                    title=question,
+                )
 
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
@@ -63,7 +69,7 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
 @router.post("")
 async def chat(
     request: ChatRequest,
-    _: str = Depends(require_api_key),
+    user_id: str = Depends(require_user),
 ):
     # Import here to avoid circular import at module load time
     from app.main import agent_graph
@@ -76,8 +82,13 @@ async def chat(
     current_time = request.current_time or datetime.now().strftime("%A %H:%M")
     logger.info(f"POST /chat — conv={conversation_id}, msg='{request.message[:80]}'")
 
+    config = {
+        "configurable": {"thread_id": conversation_id},
+        "metadata": {"user_id": user_id},
+    }
+
     return StreamingResponse(
-        _sse_generator(request.message, conversation_id, current_time, agent_graph),
+        _sse_generator(request.message, conversation_id, current_time, agent_graph, config),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

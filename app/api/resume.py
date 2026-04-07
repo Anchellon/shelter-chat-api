@@ -7,7 +7,7 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from app.agent.runner import stream_resume
-from app.core.auth import require_api_key
+from app.core.auth import require_user
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,12 @@ class ResumeRequest(BaseModel):
     answers: dict = {}          # {"what": "sfsg-shelter", "who": ["Adults"], "where": "Tenderloin"}
 
 
-async def _sse_resume_generator(request: ResumeRequest, graph):
+async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
     from app.agent.runner import stream_resume
     logger.info(f"SSE resume — conv={request.conversation_id}, action={request.action}")
 
     try:
-        async for event in stream_resume(request, graph):
+        async for event in stream_resume(request, graph, config):
             if event["type"] == "text":
                 yield f"data: {json.dumps({'type': 'text-delta', 'delta': event['content']})}\n\n"
             elif event["type"] == "groups_identified":
@@ -50,12 +50,17 @@ async def _sse_resume_generator(request: ResumeRequest, graph):
 @router.post("/resume")
 async def resume(
     request: ResumeRequest,
-    _: str = Depends(require_api_key),
+    user_id: str = Depends(require_user),
 ):
     from app.main import agent_graph
 
+    config = {
+        "configurable": {"thread_id": request.conversation_id},
+        "metadata": {"user_id": user_id},
+    }
+
     return StreamingResponse(
-        _sse_resume_generator(request, agent_graph),
+        _sse_resume_generator(request, agent_graph, config),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -10,8 +10,10 @@ from app.core.checkpointer import close_checkpointer, init_checkpointer
 from app.core.mcp_client import MCPClient
 from app.agent.graph import build_graph
 from app.api.chat import router as chat_router
+from app.api.conversations import router as conversations_router
 from app.api.resume import router as resume_router
 from app.api.services import router as services_router
+from app.api.saved_queries import router as saved_queries_router
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -74,6 +76,8 @@ app.add_middleware(
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(resume_router, prefix="/api/v1")
 app.include_router(services_router, prefix="/api/v1")
+app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(saved_queries_router, prefix="/api/v1")
 
 
 @app.get("/health")

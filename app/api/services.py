@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import require_api_key
+from app.core.auth import require_user
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class ServicesBatchRequest(BaseModel):
 @router.post("/batch")
 async def services_batch(
     request: ServicesBatchRequest,
-    _: str = Depends(require_api_key),
+    _: str = Depends(require_user),
 ):
     from app.main import mcp_client
 

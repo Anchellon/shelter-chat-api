@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     # PostgreSQL (for AsyncPostgresSaver checkpointer)
     database_url: str = "postgresql://postgres:mypassword@localhost:5432/sheltertech"
 
-    # Auth — if empty list, auth is disabled (local dev mode)
-    api_key_header: str = "X-API-Key"
-    api_keys: list[str] = []
+    # Auth0 JWT validation
+    auth0_domain: str = ""
+    auth0_audience: str = ""
 
     # LangSmith observability (optional)
     langchain_tracing_v2: bool = False

@@ -1,0 +1,4 @@
+-- Baseline: LangGraph checkpointer tables and existing schema
+-- This migration is never run — it represents the state of the DB
+-- at the point Flyway was introduced (2026-04-06).
+-- Existing tables: checkpoints, checkpoint_blobs, checkpoint_migrations, checkpoint_writes
