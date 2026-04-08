@@ -68,7 +68,7 @@ async def list_saved_queries(user_id: str = Depends(require_user)):
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         rows = await conn.execute(
             """
-            SELECT id, title, group_data, array_length(service_ids, 1), created_at
+            SELECT id, thread_id, group_id, title, group_data, rationale, array_length(service_ids, 1), created_at
             FROM saved_queries
             WHERE user_id = %s
             ORDER BY created_at DESC
@@ -79,10 +79,13 @@ async def list_saved_queries(user_id: str = Depends(require_user)):
         saved = [
             {
                 "id": str(row[0]),
-                "title": row[1],
-                "group_data": row[2],
-                "service_count": row[3] or 0,
-                "created_at": row[4].isoformat(),
+                "thread_id": row[1],
+                "group_id": row[2],
+                "title": row[3],
+                "group": row[4],
+                "rationale": row[5],
+                "service_count": row[6] or 0,
+                "created_at": row[7].isoformat(),
             }
             async for row in rows
         ]
@@ -96,7 +99,7 @@ async def get_saved_query(saved_query_id: UUID, user_id: str = Depends(require_u
         row = await (
             await conn.execute(
                 """
-                SELECT id, title, group_data, rationale, service_ids, created_at
+                SELECT id, thread_id, group_id, title, group_data, rationale, service_ids, created_at
                 FROM saved_queries
                 WHERE id = %s AND user_id = %s
                 """,
@@ -109,11 +112,13 @@ async def get_saved_query(saved_query_id: UUID, user_id: str = Depends(require_u
 
     return {
         "id": str(row[0]),
-        "title": row[1],
-        "group_data": row[2],
-        "rationale": row[3],
-        "service_ids": row[4],
-        "created_at": row[5].isoformat(),
+        "thread_id": row[1],
+        "group_id": row[2],
+        "title": row[3],
+        "group": row[4],
+        "rationale": row[5],
+        "service_ids": row[6],
+        "created_at": row[7].isoformat(),
     }
 
 

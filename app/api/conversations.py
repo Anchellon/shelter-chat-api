@@ -65,9 +65,31 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
                 "content": m.content,
             })
 
+    async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+        referral_rows = await conn.execute(
+            """
+            SELECT id, title, saved, groups, created_at
+            FROM referrals
+            WHERE thread_id = %s AND user_id = %s
+            ORDER BY created_at ASC
+            """,
+            (conversation_id, user_id),
+        )
+        referrals = [
+            {
+                "id": str(r[0]),
+                "title": r[1],
+                "saved": r[2],
+                "groups": r[3],
+                "created_at": r[4].isoformat(),
+            }
+            async for r in referral_rows
+        ]
+
     return {
         "id": conversation_id,
         "messages": messages,
         "groups": state.values.get("groups", []),
         "formatted": state.values.get("formatted", {}),
+        "referrals": referrals,
     }

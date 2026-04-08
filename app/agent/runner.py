@@ -63,25 +63,24 @@ async def stream_agent(
         elif kind == "on_chain_end" and event.get("name") == "classify_groups":
             groups = event.get("data", {}).get("output", {}).get("groups", [])
             if groups:
-                logger.info(f"groups_identified: {len(groups)} group(s)")
-                yield {"type": "groups_identified", "groups": groups}
+                logger.info(f"groups_identified: {len(groups)} group(s) — held until format_complete")
 
         elif kind == "on_chain_end" and event.get("name") == "search_per_group":
             results = event.get("data", {}).get("output", {}).get("results", {})
             if results:
                 logger.info(f"search_complete: {len(results)} group(s)")
-                yield {"type": "search_complete", "results": results}
 
         elif kind == "on_chain_end" and event.get("name") == "format_results":
             output = event.get("data", {}).get("output", {})
             formatted = output.get("formatted", {})
+            groups = output.get("groups", [])
             messages = output.get("messages", [])
             intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
             if intro:
                 yield {"type": "text", "content": intro}
             if formatted:
                 logger.info(f"format_complete: {len(formatted)} group(s)")
-                yield {"type": "format_complete", "formatted": formatted}
+                yield {"type": "format_complete", "formatted": formatted, "groups": groups}
 
     # After stream ends, check for pending interrupts (intake HITL)
     async for event in _drain_interrupts(graph, config):
@@ -105,24 +104,21 @@ async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, No
             yield {"type": "tool_end", "tool": event.get("name", "unknown_tool")}
 
         elif kind == "on_chain_end" and event.get("name") == "classify_groups":
-            groups = event.get("data", {}).get("output", {}).get("groups", [])
-            if groups:
-                yield {"type": "groups_identified", "groups": groups}
+            pass  # held until format_complete
 
         elif kind == "on_chain_end" and event.get("name") == "search_per_group":
-            results = event.get("data", {}).get("output", {}).get("results", {})
-            if results:
-                yield {"type": "search_complete", "results": results}
+            pass  # held until format_complete
 
         elif kind == "on_chain_end" and event.get("name") == "format_results":
             output = event.get("data", {}).get("output", {})
             formatted = output.get("formatted", {})
+            groups = output.get("groups", [])
             messages = output.get("messages", [])
             intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
             if intro:
                 yield {"type": "text", "content": intro}
             if formatted:
-                yield {"type": "format_complete", "formatted": formatted}
+                yield {"type": "format_complete", "formatted": formatted, "groups": groups}
 
     async for event in _drain_interrupts(graph, config):
         yield event

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.agent.runner import stream_agent
 from app.core.auth import require_user
-from app.core.db import save_conversation_summary
+from app.core.db import create_referral, save_conversation_summary
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,15 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                 yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
 
             elif event["type"] == "format_complete":
-                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted']})}\n\n"
+                formatted = event["formatted"]
+                groups = event.get("groups", [])
+                referral_id = await create_referral(
+                    thread_id=conversation_id,
+                    user_id=config["metadata"]["user_id"],
+                    groups=groups,
+                    formatted=formatted,
+                )
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
                 await save_conversation_summary(
                     thread_id=conversation_id,
                     user_id=config["metadata"]["user_id"],

@@ -31,7 +31,7 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
             elif event["type"] == "groups_identified":
                 yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
             elif event["type"] == "format_complete":
-                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted']})}\n\n"
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted'], 'groups': event.get('groups', [])})}\n\n"
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return

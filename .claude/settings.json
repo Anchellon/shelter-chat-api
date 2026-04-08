@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Anshul/code/projects/shelter-mcp-server/**)"
+      "Read(//c/Anshul/code/projects/shelter-mcp-server/**)",
+      "Read(//c/Anshul/code/projects/shelter-search/src/shared/components/**)",
+      "Read(//c/Anshul/code/projects/shelter-search/src/app/store/slices/**)",
+      "Read(//c/Anshul/code/projects/shelter-search/src/features/chat/components/**)",
+      "Read(//c/Anshul/code/projects/shelter-search/src/features/collections/**)",
+      "Read(//c/Anshul/code/projects/shelter-search/src/features/collections/components/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Anshul\\code\\projects\\shelter-search\\mockups"
     ]
   }
 }
