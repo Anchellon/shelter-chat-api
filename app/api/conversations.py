@@ -1,7 +1,7 @@
 import logging
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.auth import require_user
@@ -13,24 +13,30 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 @router.get("")
-async def list_conversations(user_id: str = Depends(require_user)):
+async def list_conversations(
+    user_id: str = Depends(require_user),
+    q: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+):
+    limit = 20
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         rows = await conn.execute(
             """
-            SELECT thread_id, title
+            SELECT thread_id, title, updated_at
             FROM conversation_summaries
-            WHERE user_id = %s
+            WHERE user_id = %s AND (%s::text IS NULL OR title ILIKE %s)
             ORDER BY updated_at DESC
-            LIMIT 50
+            LIMIT %s OFFSET %s
             """,
-            (user_id,),
+            (user_id, q, f"%{q}%" if q else None, limit + 1, offset),
         )
-        conversations = [
-            {"id": row[0], "title": row[1]}
-            async for row in rows
+        items = [
+            {"id": r[0], "title": r[1], "updated_at": r[2].isoformat()}
+            async for r in rows
         ]
 
-    return {"conversations": conversations}
+    has_more = len(items) > limit
+    return {"conversations": items[:limit], "has_more": has_more}
 
 
 @router.get("/{conversation_id}")

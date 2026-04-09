@@ -19,7 +19,7 @@ async def save_conversation_summary(
                 """
                 INSERT INTO conversation_summaries (thread_id, user_id, title)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (thread_id) DO NOTHING
+                ON CONFLICT (thread_id) DO UPDATE SET updated_at = NOW()
                 """,
                 (thread_id, user_id, title[:80]),
             )
