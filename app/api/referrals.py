@@ -3,7 +3,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.auth import require_user
 from app.core.config import settings
@@ -11,6 +11,11 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/referrals", tags=["referrals"])
+
+
+class UpdateReferralRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    saved: bool | None = None
 
 
 class CreateReferralRequest(BaseModel):
@@ -56,19 +61,24 @@ async def create_referral(request: CreateReferralRequest, user_id: str = Depends
     }
 
 
-@router.patch("/{referral_id}/save")
-async def star_referral(referral_id: UUID, user_id: str = Depends(require_user)):
+@router.patch("/{referral_id}")
+async def update_referral(referral_id: UUID, request: UpdateReferralRequest, user_id: str = Depends(require_user)):
+    fields = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=422, detail="No fields to update")
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         result = await conn.execute(
-            "UPDATE referrals SET saved = TRUE WHERE id = %s AND user_id = %s",
-            (str(referral_id), user_id),
+            f"UPDATE referrals SET {set_clause} WHERE id = %s AND user_id = %s",
+            (*fields.values(), str(referral_id), user_id),
         )
         await conn.commit()
 
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Referral not found")
 
-    return {"id": str(referral_id), "saved": True}
+    return {"id": str(referral_id), **fields}
 
 
 @router.get("")
@@ -131,6 +141,7 @@ async def get_referral(referral_id: UUID, user_id: str = Depends(require_user)):
         "groups": row[4],
         "created_at": row[5].isoformat(),
     }
+
 
 
 @router.delete("/{referral_id}", status_code=204)
