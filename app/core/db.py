@@ -21,7 +21,7 @@ async def save_conversation_summary(
                 VALUES (%s, %s, %s)
                 ON CONFLICT (thread_id) DO UPDATE SET updated_at = NOW()
                 """,
-                (thread_id, user_id, title[:80]),
+                (thread_id, user_id, title),
             )
             await conn.commit()
     except Exception as e:

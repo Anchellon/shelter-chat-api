@@ -1,10 +1,15 @@
+import logging
+
 from langchain_core.language_models.chat_models import BaseChatModel
+
+logger = logging.getLogger(__name__)
 
 
 def get_llm(provider: str, model: str, json_mode: bool = False, max_tokens: int | None = None) -> BaseChatModel:
     """
     Return a LangChain chat model for the given provider and model name.
-    json_mode=True forces JSON output (supported by ollama and openai).
+    json_mode=True forces JSON output (ollama: format param, openai: response_format,
+    anthropic: handled by the node's own SystemMessage — no native json mode needed).
     """
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -29,6 +34,7 @@ def get_llm(provider: str, model: str, json_mode: bool = False, max_tokens: int 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         from app.core.config import settings
+        logger.warning("Using Anthropic API — this call will be billed to your Anthropic account (model: %s)", model)
         kwargs = dict(model=model, temperature=0, api_key=settings.anthropic_api_key)
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
