@@ -21,8 +21,13 @@ def build_search_per_group_node(tools_by_name: dict):
 
         for group in groups:
             group_id = str(group["group_id"])
+            query_parts = [group["what"]]
+            if group.get("who"):
+                query_parts.append(f"for {group['who']}")
+            if group.get("where"):
+                query_parts.append(f"in {group['where']}")
             args = {
-                "query": group["what"],
+                "query": " ".join(query_parts),
             }
             if group.get("categories"):
                 args["categories"] = group["categories"]
