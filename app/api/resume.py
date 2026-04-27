@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 
 from app.agent.runner import stream_resume
 from app.core.auth import require_user
+from app.core.db import create_referral, save_conversation_summary
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +23,36 @@ class ResumeRequest(BaseModel):
 
 
 async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
-    from app.agent.runner import stream_resume
     logger.info(f"SSE resume — conv={request.conversation_id}, action={request.action}")
+
+    msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+    has_text = False
 
     try:
         async for event in stream_resume(request, graph, config):
             if event["type"] == "text":
-                yield f"data: {json.dumps({'type': 'text-delta', 'delta': event['content']})}\n\n"
+                if not has_text:
+                    yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
+                    has_text = True
+                yield f"data: {json.dumps({'type': 'text-delta', 'id': msg_id, 'delta': event['content']})}\n\n"
             elif event["type"] == "groups_identified":
                 yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
             elif event["type"] == "format_complete":
-                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': event['formatted'], 'groups': event.get('groups', [])})}\n\n"
+                formatted = event["formatted"]
+                groups = event.get("groups", [])
+                referral_id = await create_referral(
+                    thread_id=request.conversation_id,
+                    user_id=config["metadata"]["user_id"],
+                    groups=groups,
+                    formatted=formatted,
+                )
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
+                title = f"{groups[0].get('what', 'Search')} near {groups[0].get('where', 'unknown')}" if groups else "Search"
+                await save_conversation_summary(
+                    thread_id=request.conversation_id,
+                    user_id=config["metadata"]["user_id"],
+                    title=title,
+                )
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return
@@ -44,6 +65,8 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
         yield f"data: {json.dumps({'type': 'error', 'errorText': str(e)})}\n\n"
         return
 
+    if has_text:
+        yield f"data: {json.dumps({'type': 'text-end', 'id': msg_id})}\n\n"
     yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
 
 

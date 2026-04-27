@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,8 +28,25 @@ class Settings(BaseSettings):
     # MCP server
     mcp_server_url: str = "http://localhost:8001/mcp"
 
-    # PostgreSQL (for AsyncPostgresSaver checkpointer)
+    # PostgreSQL — set DATABASE_URL directly or supply individual components
     database_url: str = "postgresql://postgres:mypassword@localhost:5432/sheltertech"
+    db_host: str = ""
+    db_port: int = 5432
+    db_name: str = "shelter"
+    db_user: str = ""
+    db_password: str = ""
+
+    @model_validator(mode="after")
+    def build_database_url(self) -> "Settings":
+        if self.db_host and self.db_user and self.db_password:
+            self.database_url = (
+                f"postgresql://{self.db_user}:{self.db_password}"
+                f"@{self.db_host}:{self.db_port}/{self.db_name}"
+            )
+        return self
+
+    # CORS — comma-separated list of allowed origins
+    cors_origins: str = "http://localhost:5173"
 
     # Auth0 JWT validation
     auth0_domain: str = ""
