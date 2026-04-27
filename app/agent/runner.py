@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, AsyncGenerator
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 if TYPE_CHECKING:
@@ -60,10 +60,22 @@ async def stream_agent(
             logger.info(f"Tool end: {tool_name}")
             yield {"type": "tool_end", "tool": tool_name}
 
+        elif kind == "on_chain_end" and event.get("name") == "guardrails":
+            messages = event.get("data", {}).get("output", {}).get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                logger.info("guardrails blocked — emitting refusal text")
+                yield {"type": "text", "content": messages[-1].content}
+
         elif kind == "on_chain_end" and event.get("name") == "classify_groups":
             groups = event.get("data", {}).get("output", {}).get("groups", [])
             if groups:
                 logger.info(f"groups_identified: {len(groups)} group(s) — held until format_complete")
+            else:
+                logger.info("classify_groups: 0 groups — emitting off-topic fallback")
+                yield {
+                    "type": "text",
+                    "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
+                }
 
         elif kind == "on_chain_end" and event.get("name") == "search_per_group":
             results = event.get("data", {}).get("output", {}).get("results", {})

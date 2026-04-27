@@ -81,7 +81,7 @@ def build_format_results_node():
         return {
             "formatted": formatted,
             "groups": groups,
-            "messages": [AIMessage(content=_build_intro(groups))],
+            "messages": [AIMessage(content=_build_intro(groups))] if groups else [],
         }
 
     return format_results_node
