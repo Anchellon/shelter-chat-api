@@ -86,11 +86,6 @@ Who: {who}
 Output:"""
 
 
-def _parse_geo(result: Any) -> tuple[float | None, float | None]:
-    if isinstance(result, dict):
-        return result.get("lat"), result.get("lng")
-    return None, None
-
 
 def _unwrap_tool_result(result: Any) -> Any:
     """
@@ -165,7 +160,6 @@ def build_intake_node(tools_by_name: dict):
 
         cats_tool = tools_by_name.get("list_categories")
         eligs_tool = tools_by_name.get("list_eligibilities")
-        geo_tool = tools_by_name.get("geocode_location")
 
         categories: list[str] = _unwrap_tool_result(await cats_tool.ainvoke({})) if cats_tool else []
         eligibilities: dict = _unwrap_tool_result(await eligs_tool.ainvoke({})) if eligs_tool else {}
@@ -178,12 +172,6 @@ def build_intake_node(tools_by_name: dict):
             mapped_elig = await _map_eligibilities(group["who"], eligibilities) if group["who"] else []
             if "Anyone in Need" not in mapped_elig:
                 mapped_elig.append("Anyone in Need")
-
-            # --- Geocoding ---
-            lat, lng = None, None
-            if geo_tool and group.get("where"):
-                geo_result = _unwrap_tool_result(await geo_tool.ainvoke({"location_text": group["where"]}))
-                lat, lng = _parse_geo(geo_result)
 
             # --- Gap detection ---
             gaps = []
@@ -225,9 +213,6 @@ def build_intake_node(tools_by_name: dict):
                     mapped_elig = who_ans if isinstance(who_ans, list) else [who_ans]
                     if "Anyone in Need" not in mapped_elig:
                         mapped_elig.append("Anyone in Need")
-                if "where" in answers and geo_tool:
-                    geo_result = _unwrap_tool_result(await geo_tool.ainvoke({"location_text": answers["where"]}))
-                    lat, lng = _parse_geo(geo_result)
 
             updated_groups.append(Group(
                 group_id=group["group_id"],
@@ -238,8 +223,8 @@ def build_intake_node(tools_by_name: dict):
                 open_now=group.get("open_now", False),
                 categories=mapped_cats,
                 eligibilities=mapped_elig,
-                lat=lat,
-                lng=lng,
+                lat=group.get("lat"),
+                lng=group.get("lng"),
             ))
 
         logger.info(f"intake: {len(updated_groups)} group(s) complete")

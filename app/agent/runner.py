@@ -66,6 +66,12 @@ async def stream_agent(
                 logger.info("guardrails blocked — emitting refusal text")
                 yield {"type": "text", "content": messages[-1].content}
 
+        elif kind == "on_chain_end" and event.get("name") == "geo_check":
+            messages = event.get("data", {}).get("output", {}).get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                logger.info("geo_check: non-SF location — emitting refusal text")
+                yield {"type": "text", "content": messages[-1].content}
+
         elif kind == "on_chain_end" and event.get("name") == "classify_groups":
             groups = event.get("data", {}).get("output", {}).get("groups", [])
             if groups:

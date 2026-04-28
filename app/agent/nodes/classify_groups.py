@@ -18,12 +18,13 @@ Rules:
 - OFFERS are NOT needs. If the message says "I can provide X", "I offer X", "I am giving X", "I have X available" — that is an offer. Do NOT include it. Return {"groups": []} for offers.
 - Group by WHO + WHERE. Each unique combination of who + where = one group. If multiple needs share the same "who" and "where", combine them into ONE group with a combined "what" (e.g. "food and shelter"). Only create separate groups when "who" or "where" differ.
 - A query can produce multiple groups (e.g. different populations or locations). Each group can represent multiple service needs and a population with multiple characteristics — capture all of them in "what" and "who" as natural language.
-- If no location is mentioned, set "where" to "San Francisco".
+- If no location is mentioned, set "where" to "San Francisco". If a location IS mentioned, copy it exactly as the user said it — do NOT replace non-SF locations with "San Francisco".
 - Copy "what", "who", and "when" as raw natural language — do not normalize or categorize.
 - Set "who" to null if no specific population is mentioned.
 - Set "when" to null if no time or day is mentioned. Extract it if the user says things like "tonight", "Saturday morning", "after 6pm", "on weekdays", etc.
 - Set "open_now" to true ONLY if the user explicitly wants open services right now — phrases like "open now", "currently open", "open today", "what's open". Set to false otherwise, even if "when" is mentioned.
 - group_id starts at 1 and increments per group.
+- If the message is NOT a request to find social services (shelter, food, health, jobs, substance use treatment, legal aid, housing, mental health, etc.), return {"groups": []}. Examples of non-service queries: weather, news, general advice, disaster preparedness, emergency response, cooking, sports, coding.
 
 Return ONLY a JSON object with a "groups" key. No explanation. No markdown fences.
 
