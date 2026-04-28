@@ -28,6 +28,32 @@ Categories:
 Need: {what}
 Output:"""
 
+_SELECT_DIMENSIONS_PROMPT = """\
+A social worker is searching for services for a client. Based on the service need and their original \
+request, choose the 2-3 eligibility dimension groups that are most useful to ask about to find the \
+right services. Fewer focused questions are better than many generic ones.
+
+Dimension groups (ordered from most to least commonly relevant):
+{dimensions}
+
+Service need: {what}
+Original request: {original_message}
+
+Guidelines:
+- "age" is almost always worth asking
+- "housing" matters for shelter, food, and housing needs
+- "gender" matters for domestic violence, women's shelters, LGBTQ services
+- "family_status" matters for childcare, family services, parenting programs
+- "employment" matters for job training, financial assistance
+- "financial" matters for financial aid, healthcare, housing assistance
+- "health" matters for medical, mental health, substance use services
+- "immigration" matters for legal services or refugee/immigrant programs
+- "ethnicity" and "other" are rarely needed unless the request hints at them
+- If the original request already answers a dimension (e.g. mentions "teens"), skip it
+
+Return JSON: {{"dimensions": ["dim_a", "dim_b"]}}
+Output:"""
+
 _MAP_ELIGIBILITY_PROMPT = """\
 Map who needs this service to matching values from the list below.
 Return a JSON object with an "eligibilities" key containing an array of matching strings.
@@ -154,9 +180,37 @@ def build_intake_node(tools_by_name: dict):
         # Last resort: scan raw string for known values
         return [v for v in all_values if v in raw]
 
+    async def _select_relevant_dimensions(what: str, original_message: str, eligibility_keys: list[str]) -> list[str]:
+        prompt = _SELECT_DIMENSIONS_PROMPT.format(
+            dimensions="\n".join(f"- {k}" for k in eligibility_keys),
+            what=what,
+            original_message=original_message,
+        )
+        response = await llm_json.ainvoke([HumanMessage(content=prompt)])
+        raw = response.content if isinstance(response.content, str) else "{}"
+        try:
+            result = json.loads(raw)
+            if isinstance(result, dict):
+                dims = result.get("dimensions", [])
+                if isinstance(dims, list):
+                    valid = [d for d in dims if d in eligibility_keys]
+                    if valid:
+                        return valid
+        except Exception:
+            pass
+        # Fallback: first two dimensions (AGE, HOUSING STATUS are first by convention)
+        return eligibility_keys[:2]
+
     async def intake_node(state: NavigatorState) -> dict:
         groups = state["groups"]
         current_time = state.get("current_time") or ""
+
+        # Extract the original human message for context-aware dimension selection
+        original_message = ""
+        for m in reversed(state.get("messages", [])):
+            if isinstance(m, HumanMessage):
+                original_message = m.content if isinstance(m.content, str) else ""
+                break
 
         cats_tool = tools_by_name.get("list_categories")
         eligs_tool = tools_by_name.get("list_eligibilities")
@@ -183,11 +237,15 @@ def build_intake_node(tools_by_name: dict):
                     "options": categories,
                 })
             if not group["who"]:
+                relevant_keys = await _select_relevant_dimensions(
+                    group["what"], original_message, list(eligibilities.keys())
+                )
+                filtered_eligibilities = {k: eligibilities[k] for k in relevant_keys if k in eligibilities}
                 gaps.append({
                     "dimension": "who",
                     "type": "multi_select",
                     "question": "Who is this for?",
-                    "options": eligibilities,
+                    "options": filtered_eligibilities or eligibilities,
                 })
 
             # --- HITL interrupt if gaps ---

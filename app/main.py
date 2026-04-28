@@ -14,6 +14,7 @@ from app.api.conversations import router as conversations_router
 from app.api.resume import router as resume_router
 from app.api.services import router as services_router
 from app.api.referrals import router as referrals_router
+from app.api.saved_services import router as saved_services_router
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ app.include_router(resume_router, prefix="/api/v1")
 app.include_router(services_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(referrals_router, prefix="/api/v1")
+app.include_router(saved_services_router, prefix="/api/v1")
 
 
 @app.get("/health")
