@@ -1,7 +1,7 @@
 import logging
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.auth import require_user
@@ -55,9 +55,11 @@ async def unsave_service(service_id: int, user_id: str = Depends(require_user)):
 
 
 @router.get("")
-async def list_saved_services(user_id: str = Depends(require_user)):
-    from app.main import mcp_client
-
+async def list_saved_services(
+    user_id: str = Depends(require_user),
+    limit: int = Query(default=10, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         rows = await (
             await conn.execute(
@@ -66,19 +68,25 @@ async def list_saved_services(user_id: str = Depends(require_user)):
                 FROM saved_services
                 WHERE user_id = %s
                 ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
                 """,
-                (user_id,),
+                (user_id, limit + 1, offset),
             )
         ).fetchall()
 
-    if not rows:
-        return {"services": []}
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
-    service_ids = [row[0] for row in rows]
-    saved_at = {row[0]: row[1].isoformat() for row in rows}
+    if not rows:
+        return {"services": [], "has_more": False}
+
+    from app.main import mcp_client
 
     if mcp_client is None:
         raise HTTPException(status_code=503, detail="MCP client not available")
+
+    service_ids = [row[0] for row in rows]
+    saved_at_map = {row[0]: row[1].isoformat() for row in rows}
 
     try:
         details = await mcp_client.invoke(
@@ -90,7 +98,7 @@ async def list_saved_services(user_id: str = Depends(require_user)):
 
     for svc in details:
         sid = svc.get("service_id")
-        if sid in saved_at:
-            svc["saved_at"] = saved_at[sid]
+        if sid in saved_at_map:
+            svc["saved_at"] = saved_at_map[sid]
 
-    return {"services": details}
+    return {"services": details, "has_more": has_more}
