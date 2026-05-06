@@ -4,6 +4,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agent.runner import _extract_text
 from app.core.auth import require_user
 from app.core.config import settings
 
@@ -63,13 +64,15 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
                 "type": "text",
                 "content": m.content,
             })
-        elif isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip():
-            messages.append({
-                "id": m.id or f"msg_{len(messages)}",
-                "role": "assistant",
-                "type": "text",
-                "content": m.content,
-            })
+        elif isinstance(m, AIMessage):
+            content = _extract_text(m.content)
+            if content.strip():
+                messages.append({
+                    "id": m.id or f"msg_{len(messages)}",
+                    "role": "assistant",
+                    "type": "text",
+                    "content": content,
+                })
 
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         referral_rows = await conn.execute(
