@@ -83,11 +83,15 @@ SSE event: format_complete
     type: "format_complete",
     formatted: { "1": { rationale, service_ids }, ... },
     groups: [ Group, ... ],
+    changed_group_ids: [int, ...],   // groups whose search params changed this turn
+    removed_group_ids: [int, ...],   // groups dropped this turn (refine only)
     referral_id: "<uuid>"
   }
 ```
 
 The frontend uses `referral_id` to link the displayed result to the DB record.
+
+`changed_group_ids` is the full list of current `group_id`s on a fresh search (everything is new) and the diff against the prior turn on a refine — a group counts as changed if any of `what / who / where / when / open_now` differs, or if it's a newly added group. `removed_group_ids` is non-empty only when a refine drops a previously-existing group. Both are persisted on the referral row so reload through `/conversations/{id}` reconstructs each historical bubble's highlight state.
 
 ---
 
@@ -144,12 +148,18 @@ Auth: Bearer token required
 Returns:
   {
     id,
-    messages: [{ id, role: "user"|"assistant", type: "text", content }],
+    messages: [
+      { id, role: "user", type: "text", content }
+      | { id, role: "assistant", type: "text", content }
+      | { id, role: "assistant", type: "referral", referralId, groups, changed_group_ids, removed_group_ids }
+    ],
     groups: [ Group ],
     formatted: { ... },
-    referrals: [{ id, title, saved, groups, created_at }]
+    referrals: [{ id, title, saved, groups, changed_group_ids, removed_group_ids, created_at }]
   }
 ```
+
+Each `referral` message carries the same `changed_group_ids` / `removed_group_ids` as the live `format_complete` event, so the frontend reconstructs historical bubble highlights on reload.
 
 ---
 

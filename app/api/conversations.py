@@ -58,7 +58,7 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         referral_rows = await conn.execute(
             """
-            SELECT id, title, saved, groups, created_at
+            SELECT id, title, saved, groups, changed_group_ids, removed_group_ids, created_at
             FROM referrals
             WHERE thread_id = %s AND user_id = %s
             ORDER BY created_at ASC
@@ -71,7 +71,9 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
                 "title": r[1],
                 "saved": r[2],
                 "groups": r[3],
-                "created_at": r[4].isoformat(),
+                "changed_group_ids": r[4] or [],
+                "removed_group_ids": r[5] or [],
+                "created_at": r[6].isoformat(),
             }
             async for r in referral_rows
         ]
@@ -101,6 +103,8 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
                         "content": "",
                         "referralId": referral_id,
                         "groups": ref["groups"] if ref else [],
+                        "changed_group_ids": ref["changed_group_ids"] if ref else [],
+                        "removed_group_ids": ref["removed_group_ids"] if ref else [],
                     })
             else:
                 content = _extract_text(m.content)

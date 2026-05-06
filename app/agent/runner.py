@@ -133,13 +133,23 @@ async def stream_agent(
             output = event.get("data", {}).get("output", {})
             formatted = output.get("formatted", {})
             groups = output.get("groups", [])
+            changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
+            removed_group_ids = output.get("removed_group_ids") or []
             messages = output.get("messages", [])
             intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
             if intro:
                 yield {"type": "text", "content": intro}
             if formatted:
-                logger.info(f"format_complete: {len(formatted)} group(s)")
-                yield {"type": "format_complete", "formatted": formatted, "groups": groups}
+                logger.info(
+                    f"format_complete: {len(formatted)} group(s); changed={changed_group_ids}; removed={removed_group_ids}"
+                )
+                yield {
+                    "type": "format_complete",
+                    "formatted": formatted,
+                    "groups": groups,
+                    "changed_group_ids": changed_group_ids,
+                    "removed_group_ids": removed_group_ids,
+                }
 
         elif kind == "on_chain_end" and event.get("name") == "update_client_context":
             output = event.get("data", {}).get("output", {})
@@ -200,12 +210,20 @@ async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, No
             output = event.get("data", {}).get("output", {})
             formatted = output.get("formatted", {})
             groups = output.get("groups", [])
+            changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
+            removed_group_ids = output.get("removed_group_ids") or []
             messages = output.get("messages", [])
             intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
             if intro:
                 yield {"type": "text", "content": intro}
             if formatted:
-                yield {"type": "format_complete", "formatted": formatted, "groups": groups}
+                yield {
+                    "type": "format_complete",
+                    "formatted": formatted,
+                    "groups": groups,
+                    "changed_group_ids": changed_group_ids,
+                    "removed_group_ids": removed_group_ids,
+                }
 
         elif kind == "on_chain_end" and event.get("name") == "update_client_context":
             output = event.get("data", {}).get("output", {})

@@ -45,6 +45,8 @@ class NavigatorState(TypedDict):
     intent_queue: list[str]
     secondary_message: str | None
     pending_action: str | None
+    changed_group_ids: list[int]  # group_ids whose search params changed this turn (all on new_search; diff on refine)
+    removed_group_ids: list[int]  # group_ids that existed in the prior turn but were dropped this turn (refine only)
 
 
 def effective_context(

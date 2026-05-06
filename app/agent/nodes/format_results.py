@@ -78,9 +78,14 @@ def build_format_results_node():
             formatted[gid] = {"rationale": rationale, "service_ids": service_ids}
             logger.info(f"format_results: group {gid} → {len(service_ids)} services")
 
+        changed_group_ids = state.get("changed_group_ids") or [g["group_id"] for g in groups]
+        removed_group_ids = state.get("removed_group_ids") or []
+
         return {
             "formatted": formatted,
             "groups": groups,
+            "changed_group_ids": changed_group_ids,
+            "removed_group_ids": removed_group_ids,
             "messages": [AIMessage(content=_build_intro(groups))] if groups else [],
         }
 
