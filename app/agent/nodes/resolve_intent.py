@@ -21,7 +21,7 @@ You are an intent classifier for a social services navigator assistant.
 Classify the navigator's message into exactly ONE primary intent:
 
 - new_search: They want to find services for a client (fresh query describing needs)
-- refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search.
+- refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search. **Ordinal references to existing groups ("first group", "second group", "the third group", "the shelter group") always signal refine** — the navigator is modifying, removing, or re-targeting a prior group, not starting over. This holds even if the referenced ordinal doesn't exist (e.g., asking about the "second group" when only one exists) — refine_groups handles that case.
 - follow_up: Can be answered from existing results without running a new search. Analysis, comparison, ranking, or summarizing what was already found.
 - query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?")
 - set_context: They're providing or updating client demographics for the case or for a specific group ("my client is a 45yo woman", "new client", "she's also pregnant", "for group 2 the client is a senior", "the family is undocumented"). This includes attributes like age, gender, language, immigration, health, family status — even when scoped to a specific group.
@@ -76,7 +76,19 @@ Message: "she's also a domestic violence survivor"
 Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
 
 Message: "ok thanks"
-Output: {{"intent": "acknowledge", "secondary_intent": null, "secondary_message": null}}\
+Output: {{"intent": "acknowledge", "secondary_intent": null, "secondary_message": null}}
+
+Message: "drop the second group"
+Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
+
+Message: "can you search for job resources for the second group?"
+Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
+
+Message: "for the first group, change the location to the Mission"
+Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
+
+Message: "the shelter group should also include food"
+Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}\
 """
 
 _PENDING_ACTION_CONTEXT = """

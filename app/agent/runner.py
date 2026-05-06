@@ -9,6 +9,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Service-domain keywords used to detect when classify_groups returns 0 groups
+# despite an on-topic message — e.g. ordinal-reference refines that misrouted.
+_ON_TOPIC_KEYWORDS = (
+    "shelter", "housing", "food", "meal", "job", "employment", "work",
+    "health", "medical", "mental", "drug", "rehab", "substance", "legal",
+    "immigration", "asylum", "rent", "voucher", "clothing", "hygiene",
+)
+
 
 def _extract_text(content) -> str:
     """Normalize AIMessage.content to a plain string.
@@ -94,11 +102,27 @@ async def stream_agent(
             if groups:
                 logger.info(f"groups_identified: {len(groups)} group(s) — held until format_complete")
             else:
-                logger.info("classify_groups: 0 groups — emitting off-topic fallback")
-                yield {
-                    "type": "text",
-                    "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
-                }
+                # Distinguish "actually off-topic" from "we failed to parse a real
+                # service request that referenced a prior group by ordinal." The
+                # off-topic message is misleading when the user clearly mentioned
+                # a service or a group reference.
+                lower = question.lower()
+                seems_on_topic = (
+                    "group" in lower
+                    or any(kw in lower for kw in _ON_TOPIC_KEYWORDS)
+                )
+                if seems_on_topic:
+                    logger.info("classify_groups: 0 groups + on-topic signal — emitting clarify message")
+                    yield {
+                        "type": "text",
+                        "content": "I had trouble understanding that as a search. If you're trying to modify a previous group, try referring to it by what it's for (e.g., 'the shelter group') instead of by number — or describe what you're looking for fresh.",
+                    }
+                else:
+                    logger.info("classify_groups: 0 groups — emitting off-topic fallback")
+                    yield {
+                        "type": "text",
+                        "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
+                    }
 
         elif kind == "on_chain_end" and event.get("name") == "search_per_group":
             results = event.get("data", {}).get("output", {}).get("results", {})
