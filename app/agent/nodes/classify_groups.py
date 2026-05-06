@@ -5,7 +5,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.llm import get_llm
-from app.agent.state import Group, NavigatorState
+from app.agent.state import ClientContext, Group, NavigatorState
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,8 @@ Rules:
 - A query can produce multiple groups (e.g. different populations or locations). Each group can represent multiple service needs and a population with multiple characteristics — capture all of them in "what" and "who" as natural language.
 - If no location is mentioned, set "where" to "San Francisco". If a location IS mentioned, copy it exactly as the user said it — do NOT replace non-SF locations with "San Francisco".
 - Copy "what", "who", and "when" as raw natural language — do not normalize or categorize.
-- Set "who" to null if no specific population is mentioned.
+- Set "who" to null if no specific population is mentioned and no client context is provided.
+- If client context is provided (see below), use it to populate "who" when the message doesn't say who the client is. Summarise the relevant fields concisely, e.g. "45yo undocumented woman with 2 kids".
 - Set "when" to null if no time or day is mentioned. Extract it if the user says things like "tonight", "Saturday morning", "after 6pm", "on weekdays", etc.
 - Set "open_now" to true ONLY if the user explicitly wants open services right now — phrases like "open now", "currently open", "open today", "what's open". Set to false otherwise, even if "when" is mentioned.
 - group_id starts at 1 and increments per group.
@@ -47,6 +48,13 @@ Output: {"groups": []}
 
 User: "Looking for drug rehab in the Tenderloin"
 Output: {"groups": [{"group_id": 1, "what": "drug rehab", "who": null, "where": "Tenderloin, San Francisco", "when": null, "open_now": false}]}"""
+
+
+def _context_summary(context: ClientContext | None) -> str:
+    if not context:
+        return ""
+    parts = [f"{k}: {v}" for k, v in context.items() if v]
+    return ", ".join(parts) if parts else ""
 
 
 def _parse_groups(raw: str) -> list[Group]:
@@ -91,20 +99,32 @@ def _parse_groups(raw: str) -> list[Group]:
 
 async def classify_groups_node(state: NavigatorState) -> dict:
     messages = state["messages"]
-    last_human = next(
-        (m for m in reversed(messages) if isinstance(m, HumanMessage)),
-        None,
-    )
-    if last_human is None:
-        logger.warning("classify_groups: no human message in state")
-        return {"groups": []}
 
-    user_text = last_human.content if isinstance(last_human.content, str) else ""
+    # Use secondary_message (set by resolve_intent when confirming a pending action)
+    # so classify_groups sees the original service need rather than the bare "yes"
+    secondary_message = state.get("secondary_message")
+    if secondary_message:
+        user_text = secondary_message
+        logger.info("classify_groups: using secondary_message as query text")
+    else:
+        last_human = next(
+            (m for m in reversed(messages) if isinstance(m, HumanMessage)),
+            None,
+        )
+        if last_human is None:
+            logger.warning("classify_groups: no human message in state")
+            return {"groups": [], "secondary_message": None}
+        user_text = last_human.content if isinstance(last_human.content, str) else ""
+
+    context_str = _context_summary(state.get("client_context"))
+    system = SYSTEM_PROMPT
+    if context_str:
+        system = f"{SYSTEM_PROMPT}\n\nClient context: {context_str}"
 
     llm = get_llm(settings.classifier_provider, settings.classifier_model, json_mode=True)
 
     response = await llm.ainvoke([
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=system),
         HumanMessage(content=user_text),
     ])
 
@@ -119,4 +139,4 @@ async def classify_groups_node(state: NavigatorState) -> dict:
 
     logger.info(f"classify_groups extracted {len(groups)} group(s): {groups}")
 
-    return {"groups": groups}
+    return {"groups": groups, "secondary_message": None}
