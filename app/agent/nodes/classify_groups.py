@@ -141,4 +141,8 @@ async def classify_groups_node(state: NavigatorState) -> dict:
 
     logger.info(f"classify_groups extracted {len(groups)} group(s): {groups}")
 
-    return {"groups": groups, "secondary_message": None}
+    return {
+        "groups": groups,
+        "secondary_message": None,
+        "changed_group_ids": [g["group_id"] for g in groups],
+    }

@@ -114,12 +114,14 @@ async def refine_groups_node(state: NavigatorState) -> dict:
     prior_by_id = {g["group_id"]: g for g in existing_groups}
 
     groups: list[Group] = []
+    changed_group_ids: list[int] = []
     for item in groups_data:
         gid = int(item.get("group_id", 1))
         new_what = str(item.get("what", ""))
         new_who = item.get("who") or None
         new_where = str(item.get("where") or "San Francisco")
         new_when = item.get("when") if item.get("when") not in (None, "null", "") else None
+        new_open_now = bool(item.get("open_now", False))
 
         prior = prior_by_id.get(gid)
         if prior is not None:
@@ -134,12 +136,23 @@ async def refine_groups_node(state: NavigatorState) -> dict:
                 keep_lat = None
                 keep_lng = None
             keep_client_context = prior.get("client_context")
+            is_changed = (
+                prior.get("what") != new_what
+                or prior.get("who") != new_who
+                or prior.get("where") != new_where
+                or prior.get("when") != new_when
+                or bool(prior.get("open_now", False)) != new_open_now
+            )
         else:
             keep_categories = []
             keep_eligibilities = []
             keep_lat = None
             keep_lng = None
             keep_client_context = None
+            is_changed = True  # newly added group
+
+        if is_changed and new_what:
+            changed_group_ids.append(gid)
 
         groups.append(Group(
             group_id=gid,
@@ -147,7 +160,7 @@ async def refine_groups_node(state: NavigatorState) -> dict:
             who=new_who,
             where=new_where,
             when=new_when,
-            open_now=bool(item.get("open_now", False)),
+            open_now=new_open_now,
             categories=keep_categories,
             eligibilities=keep_eligibilities,
             lat=keep_lat,
@@ -157,8 +170,9 @@ async def refine_groups_node(state: NavigatorState) -> dict:
 
     groups = [g for g in groups if g["what"]]
     logger.info(
-        "refine_groups: %d refined group(s); preserved=%s",
+        "refine_groups: %d refined group(s); changed=%s; preserved=%s",
         len(groups),
+        changed_group_ids,
         [
             {
                 "id": g["group_id"],
@@ -169,4 +183,4 @@ async def refine_groups_node(state: NavigatorState) -> dict:
             for g in groups
         ],
     )
-    return {"groups": groups}
+    return {"groups": groups, "changed_group_ids": changed_group_ids}
