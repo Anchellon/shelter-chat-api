@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.types import interrupt
 
 from app.agent.llm import get_llm
-from app.agent.state import ClientContext, NavigatorState
+from app.agent.state import ClientContext, NavigatorState, effective_context
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,12 +21,12 @@ Guidelines:
 - You can rank or compare options based on what the navigator asks
 - Be honest about real-time data you don't have (current waitlist status, live capacity) — but still give a useful recommendation based on what you know
 - For broad questions spanning multiple searches ("summarize everything we found today"), read the full conversation history provided — not just the latest results
-- If client context is set, factor it into your answer
+- Each group below is for a specific person in the case; their effective client profile is shown — factor it into your answer
 
 Prior results:
 {results_summary}
 
-Client context: {client_context}\
+Case context: {case_context}\
 """
 
 _QUERY_SYSTEM = """\
@@ -44,9 +44,9 @@ Guidelines:
 - If tools return nothing useful after {max_iterations} tries, say honestly that you couldn't find the organization
 - Answer concisely — focus on exactly what the navigator asked
 - Do not invent or guess information not returned by the tools
-- If client context is set, mention how services align with the client's situation
+- If case context is set, mention how services align with the client's situation
 
-Client context: {client_context}\
+Case context: {case_context}\
 """
 
 
@@ -54,6 +54,7 @@ def _format_results_summary(
     results: dict[str, list[dict]],
     formatted: dict[str, dict],
     groups: list[dict],
+    case_context: ClientContext | None,
 ) -> str:
     if not results and not formatted:
         return "No prior search results."
@@ -67,6 +68,9 @@ def _format_results_summary(
         rationale = fmt.get("rationale", "")
         service_ids = fmt.get("service_ids", [])
         lines.append(f"**{label}** (group {group_id})")
+        eff = effective_context(case_context, group.get("client_context") if group else None)
+        if eff:
+            lines.append(f"  Person profile: {_context_summary(eff)}")
         if rationale:
             lines.append(f"  Rationale: {rationale}")
         raw_services = results.get(group_id, [])
@@ -110,10 +114,10 @@ def build_converse_node(tools_by_name: dict):
         results = state.get("results") or {}
         formatted = state.get("formatted") or {}
         groups = state.get("groups") or []
-        client_context = state.get("client_context")
+        case_context = state.get("case_context")
 
-        results_summary = _format_results_summary(results, formatted, groups)
-        context_str = _context_summary(client_context)
+        results_summary = _format_results_summary(results, formatted, groups, case_context)
+        context_str = _context_summary(case_context)
 
         # For session-spanning questions, include recent conversation history
         history_lines = []
@@ -126,7 +130,7 @@ def build_converse_node(tools_by_name: dict):
 
         system = _FOLLOW_UP_SYSTEM.format(
             results_summary=results_summary,
-            client_context=context_str,
+            case_context=context_str,
         )
 
         prompt_messages = [SystemMessage(content=system)]
@@ -153,8 +157,8 @@ def build_converse_node(tools_by_name: dict):
         if last_human is None:
             return {"messages": [AIMessage(content="I didn't receive a question.")]}
 
-        client_context = state.get("client_context")
-        context_str = _context_summary(client_context)
+        case_context = state.get("case_context")
+        context_str = _context_summary(case_context)
 
         # Build tool list — search_by_name may not exist yet if MCP hasn't been updated
         query_tools = [
@@ -173,7 +177,7 @@ def build_converse_node(tools_by_name: dict):
 
         system = _QUERY_SYSTEM.format(
             max_iterations=_MAX_TOOL_ITERATIONS,
-            client_context=context_str,
+            case_context=context_str,
         )
 
         tool_messages = [

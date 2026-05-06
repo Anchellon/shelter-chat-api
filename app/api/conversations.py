@@ -118,5 +118,5 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
         "groups": state.values.get("groups", []),
         "formatted": state.values.get("formatted", {}),
         "referrals": referrals,
-        "client_context": state.values.get("client_context"),
+        "case_context": state.values.get("case_context"),
     }

@@ -283,6 +283,7 @@ def build_intake_node(tools_by_name: dict):
                 eligibilities=mapped_elig,
                 lat=group.get("lat"),
                 lng=group.get("lng"),
+                client_context=group.get("client_context"),
             ))
 
         logger.info(f"intake: {len(updated_groups)} group(s) complete")

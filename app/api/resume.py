@@ -65,6 +65,16 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return
+            elif event["type"] == "context_clarify_request":
+                yield f"data: {json.dumps(event)}\n\n"
+                return
+            elif event["type"] == "context_updated":
+                payload = {"type": "context_updated"}
+                if "case_context" in event:
+                    payload["case_context"] = event["case_context"]
+                if "groups" in event:
+                    payload["groups"] = event["groups"]
+                yield f"data: {json.dumps(payload)}\n\n"
             elif event["type"] == "tool_start":
                 yield f"data: {json.dumps({'type': 'tool-start', 'tool': event['tool'], 'status': event['status']})}\n\n"
             elif event["type"] == "tool_end":

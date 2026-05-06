@@ -5,7 +5,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.llm import get_llm
-from app.agent.state import ClientContext, Group, NavigatorState
+from app.agent.state import ClientContext, Group, NavigatorState, effective_context
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ Rules:
 - New groups get group_id = max existing + 1, 2, etc.
 - To remove a group, simply omit it from the output
 - Keep all fields — reset categories/eligibilities/lat/lng to empty (intake will re-populate them)
-- If client_context is provided, factor it into who/what where relevant
+- If a per-group client context is provided, factor it into who/what where relevant
 - If no location is mentioned in the change, keep the existing where value
 - Set open_now to true ONLY if the navigator explicitly asks for open services
 
@@ -72,9 +72,15 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         logger.warning("refine_groups: no existing groups to refine — returning empty")
         return {"groups": []}
 
-    client_context = state.get("client_context")
-    context_str = _context_summary(client_context)
-    existing_str = json.dumps(existing_groups)
+    case_context = state.get("case_context")
+    # Build a per-group view annotated with effective context so the LLM understands
+    # who each group is actually for after case + group overrides are merged.
+    annotated = []
+    for g in existing_groups:
+        eff = effective_context(case_context, g.get("client_context"))
+        annotated.append({**g, "effective_context": eff})
+    existing_str = json.dumps(annotated)
+    context_str = _context_summary(case_context)
 
     llm = get_llm(settings.classifier_provider, settings.classifier_model, json_mode=True)
 
@@ -82,7 +88,7 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         SystemMessage(content=_SYSTEM_PROMPT),
         HumanMessage(content=(
             f"Existing groups: {existing_str}\n"
-            f"Client context: {context_str}\n"
+            f"Case context: {context_str}\n"
             f"Navigator change: {last_human.content}"
         )),
     ])
@@ -99,10 +105,15 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         logger.error(f"refine_groups parse error: {e} | raw: {raw[:300]}")
         return {"groups": existing_groups}
 
+    # Preserve per-group client_context across refine — the LLM is only allowed to
+    # change search params (what/who/where/when), not the person profile attached to a group.
+    prior_context_by_id = {g["group_id"]: g.get("client_context") for g in existing_groups}
+
     groups: list[Group] = []
     for item in groups_data:
+        gid = int(item.get("group_id", 1))
         groups.append(Group(
-            group_id=int(item.get("group_id", 1)),
+            group_id=gid,
             what=str(item.get("what", "")),
             who=item.get("who") or None,
             where=str(item.get("where") or "San Francisco"),
@@ -112,6 +123,7 @@ async def refine_groups_node(state: NavigatorState) -> dict:
             eligibilities=[],
             lat=None,
             lng=None,
+            client_context=prior_context_by_id.get(gid),
         ))
 
     groups = [g for g in groups if g["what"]]

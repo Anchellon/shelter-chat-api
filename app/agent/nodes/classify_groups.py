@@ -21,7 +21,7 @@ Rules:
 - If no location is mentioned, set "where" to "San Francisco". If a location IS mentioned, copy it exactly as the user said it — do NOT replace non-SF locations with "San Francisco".
 - Copy "what", "who", and "when" as raw natural language — do not normalize or categorize.
 - Set "who" to null if no specific population is mentioned and no client context is provided.
-- If client context is provided (see below), use it to populate "who" when the message doesn't say who the client is. Summarise the relevant fields concisely, e.g. "45yo undocumented woman with 2 kids".
+- If case context is provided (see below), use it to populate "who" when the message doesn't say who the client is. Summarise the relevant fields concisely, e.g. "45yo undocumented woman with 2 kids".
 - Set "when" to null if no time or day is mentioned. Extract it if the user says things like "tonight", "Saturday morning", "after 6pm", "on weekdays", etc.
 - Set "open_now" to true ONLY if the user explicitly wants open services right now — phrases like "open now", "currently open", "open today", "what's open". Set to false otherwise, even if "when" is mentioned.
 - group_id starts at 1 and increments per group.
@@ -93,6 +93,8 @@ def _parse_groups(raw: str) -> list[Group]:
             eligibilities=[],
             lat=None,
             lng=None,
+            # Per-person overrides — start empty; effective context falls back to case_context
+            client_context=None,
         ))
     return [g for g in groups if g["what"]]
 
@@ -116,10 +118,10 @@ async def classify_groups_node(state: NavigatorState) -> dict:
             return {"groups": [], "secondary_message": None}
         user_text = last_human.content if isinstance(last_human.content, str) else ""
 
-    context_str = _context_summary(state.get("client_context"))
+    context_str = _context_summary(state.get("case_context"))
     system = SYSTEM_PROMPT
     if context_str:
-        system = f"{SYSTEM_PROMPT}\n\nClient context: {context_str}"
+        system = f"{SYSTEM_PROMPT}\n\nCase context: {context_str}"
 
     llm = get_llm(settings.classifier_provider, settings.classifier_model, json_mode=True)
 
