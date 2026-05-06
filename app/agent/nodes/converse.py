@@ -116,6 +116,41 @@ def _parse_services_from_tool_result(raw) -> list[dict]:
     return []
 
 
+def _parse_service_from_tool_result(raw) -> dict | None:
+    """Extract a single service dict from an MCP tool result (e.g. get_service_details)."""
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict) and "text" in raw[0]:
+        try:
+            parsed = json.loads(raw[0]["text"])
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                return parsed[0]
+        except Exception:
+            return None
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def _merge_service_into(by_id: dict, svc: dict) -> None:
+    """Insert or merge a service dict into the id-keyed collection.
+
+    Non-empty fields from `svc` overlay existing values so enriched data from
+    get_service_details replaces skinny search-hit fields without losing the
+    original ordering.
+    """
+    sid = svc.get("id")
+    if sid is None:
+        return
+    existing = by_id.get(sid)
+    if existing is None:
+        by_id[sid] = dict(svc)
+        return
+    for k, v in svc.items():
+        if v not in (None, "", [], {}):
+            existing[k] = v
+
+
 def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
     """State update for converse query — always emits the AI message, plus the
     captured services and originating question when the query produced any."""
@@ -238,9 +273,12 @@ def build_converse_node(tools_by_name: dict):
             HumanMessage(content=last_human.content),
         ]
 
-        # Capture the latest service list returned by a search tool so follow-ups
-        # like "what locations are available?" can reason about them from state.
-        captured_services: list[dict] = []
+        # Capture services returned by search/detail tools so follow-ups like
+        # "what locations are available?" or "more about the Tenderloin one"
+        # can reason about them from state. Search-hit fields are skinny;
+        # get_service_details enriches them. Keyed by id so detail calls
+        # overlay onto the same record without losing search ordering.
+        captured_by_id: dict = {}
 
         for iteration in range(_MAX_TOOL_ITERATIONS):
             response = await llm_with_tools.ainvoke(tool_messages)
@@ -249,7 +287,7 @@ def build_converse_node(tools_by_name: dict):
             if not response.tool_calls:
                 # LLM has finished — return the answer
                 logger.info(f"converse query: answered after {iteration} tool calls")
-                return _query_state_update(response.content, last_human.content, captured_services)
+                return _query_state_update(response.content, last_human.content, list(captured_by_id.values()))
 
             # Execute all tool calls in this iteration
             for tc in response.tool_calls:
@@ -262,9 +300,12 @@ def build_converse_node(tools_by_name: dict):
                         raw = await tool.ainvoke(tc["args"])
                         tool_result = _unwrap_tool_result(raw)
                         if tool_name in ("search_by_name", "search_services"):
-                            services = _parse_services_from_tool_result(raw)
-                            if services:
-                                captured_services = services
+                            for svc in _parse_services_from_tool_result(raw):
+                                _merge_service_into(captured_by_id, svc)
+                        elif tool_name == "get_service_details":
+                            detail = _parse_service_from_tool_result(raw)
+                            if detail:
+                                _merge_service_into(captured_by_id, detail)
                     except Exception as e:
                         tool_result = f"Tool error: {e}"
                         logger.error(f"converse query tool error ({tool_name}): {e}")
@@ -277,7 +318,7 @@ def build_converse_node(tools_by_name: dict):
         # Exceeded max iterations — ask LLM to summarize with what it has
         final_response = await get_llm(settings.formatter_provider, settings.formatter_model).ainvoke(tool_messages)
         logger.info("converse query: max iterations reached, returning best answer")
-        return _query_state_update(final_response.content, last_human.content, captured_services)
+        return _query_state_update(final_response.content, last_human.content, list(captured_by_id.values()))
 
     async def converse_node(state: NavigatorState) -> dict:
         intent = state.get("intent") or "follow_up"
