@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -15,6 +16,50 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+_HEARTBEAT_INTERVAL_SEC = 15.0
+
+
+async def with_heartbeat(agen, interval: float = _HEARTBEAT_INTERVAL_SEC):
+    """Wrap an async generator so a `_heartbeat` sentinel is yielded whenever
+    the underlying generator is silent for `interval` seconds.
+
+    Lets the SSE layer emit a comment line to keep proxies (CloudFront, nginx)
+    from closing idle connections during long LLM calls — without cancelling
+    the in-flight LLM request.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    DONE = object()
+
+    async def _drain():
+        try:
+            async for item in agen:
+                await queue.put(("event", item))
+        except BaseException as e:  # noqa: BLE001 — re-raised on consumer side
+            await queue.put(("error", e))
+        finally:
+            await queue.put((DONE, None))
+
+    drain_task = asyncio.create_task(_drain())
+    try:
+        while True:
+            try:
+                kind, payload = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield {"type": "_heartbeat"}
+                continue
+            if kind is DONE:
+                return
+            if kind == "error":
+                raise payload
+            yield payload
+    finally:
+        if not drain_task.done():
+            drain_task.cancel()
+        try:
+            await drain_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None   # if None, a new conversation is started
@@ -30,7 +75,11 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
 
     try:
-        async for event in stream_agent(question, conversation_id, current_time, graph, config):
+        async for event in with_heartbeat(stream_agent(question, conversation_id, current_time, graph, config)):
+            if event["type"] == "_heartbeat":
+                yield ": keepalive\n\n"
+                continue
+
             if event["type"] == "text":
                 chunk_count += 1
                 yield f"data: {json.dumps({'type': 'text-delta', 'id': msg_id, 'delta': event['content']})}\n\n"
@@ -99,6 +148,10 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                     title=question,
                 )
                 return  # stream ends here — frontend resumes via POST /chat/resume
+
+            elif event["type"] == "error":
+                yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
+                return
 
     except Exception as e:
         logger.error(f"Stream error (conv={conversation_id}): {e}", exc_info=True)

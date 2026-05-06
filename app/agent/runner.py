@@ -63,121 +63,132 @@ async def stream_agent(
     """
     logger.info(f"stream_agent start — thread={conversation_id}, q='{question[:80]}'")
 
-    async for event in graph.astream_events(
-        {"messages": [HumanMessage(content=question)], "current_time": current_time},
-        config=config,
-        version="v2",
-    ):
-        kind = event["event"]
+    try:
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content=question)], "current_time": current_time},
+            config=config,
+            version="v2",
+        ):
+            kind = event["event"]
 
-        if kind == "on_tool_start":
-            tool_name = event.get("name", "unknown_tool")
-            tool_input = event["data"].get("input") or {}
-            logger.info(f"Tool start: {tool_name}({tool_input})")
-            yield {
-                "type": "tool_start",
-                "tool": tool_name,
-                "status": _tool_status(tool_name, tool_input),
-            }
+            if kind == "on_chain_error":
+                err = event.get("data", {}).get("error")
+                name = event.get("name", "")
+                logger.error(f"on_chain_error in {name!r}: {err}")
+                continue
 
-        elif kind == "on_tool_end":
-            tool_name = event.get("name", "unknown_tool")
-            logger.info(f"Tool end: {tool_name}")
-            yield {"type": "tool_end", "tool": tool_name}
-
-        elif kind == "on_chain_end" and event.get("name") == "guardrails":
-            messages = event.get("data", {}).get("output", {}).get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                logger.info("guardrails blocked — emitting refusal text")
-                yield {"type": "text", "content": _extract_text(messages[-1].content)}
-
-        elif kind == "on_chain_end" and event.get("name") == "geo_check":
-            messages = event.get("data", {}).get("output", {}).get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                logger.info("geo_check: non-SF location — emitting refusal text")
-                yield {"type": "text", "content": _extract_text(messages[-1].content)}
-
-        elif kind == "on_chain_end" and event.get("name") == "classify_groups":
-            groups = event.get("data", {}).get("output", {}).get("groups", [])
-            if groups:
-                logger.info(f"groups_identified: {len(groups)} group(s) — held until format_complete")
-            else:
-                # Distinguish "actually off-topic" from "we failed to parse a real
-                # service request that referenced a prior group by ordinal." The
-                # off-topic message is misleading when the user clearly mentioned
-                # a service or a group reference.
-                lower = question.lower()
-                seems_on_topic = (
-                    "group" in lower
-                    or any(kw in lower for kw in _ON_TOPIC_KEYWORDS)
-                )
-                if seems_on_topic:
-                    logger.info("classify_groups: 0 groups + on-topic signal — emitting clarify message")
-                    yield {
-                        "type": "text",
-                        "content": "I had trouble understanding that as a search. If you're trying to modify a previous group, try referring to it by what it's for (e.g., 'the shelter group') instead of by number — or describe what you're looking for fresh.",
-                    }
-                else:
-                    logger.info("classify_groups: 0 groups — emitting off-topic fallback")
-                    yield {
-                        "type": "text",
-                        "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
-                    }
-
-        elif kind == "on_chain_end" and event.get("name") == "search_per_group":
-            results = event.get("data", {}).get("output", {}).get("results", {})
-            if results:
-                logger.info(f"search_complete: {len(results)} group(s)")
-
-        elif kind == "on_chain_end" and event.get("name") == "format_results":
-            output = event.get("data", {}).get("output", {})
-            formatted = output.get("formatted", {})
-            groups = output.get("groups", [])
-            changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
-            removed_group_ids = output.get("removed_group_ids") or []
-            messages = output.get("messages", [])
-            intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
-            if intro:
-                yield {"type": "text", "content": intro}
-            if formatted:
-                logger.info(
-                    f"format_complete: {len(formatted)} group(s); changed={changed_group_ids}; removed={removed_group_ids}"
-                )
+            if kind == "on_tool_start":
+                tool_name = event.get("name", "unknown_tool")
+                tool_input = event["data"].get("input") or {}
+                logger.info(f"Tool start: {tool_name}({tool_input})")
                 yield {
-                    "type": "format_complete",
-                    "formatted": formatted,
-                    "groups": groups,
-                    "changed_group_ids": changed_group_ids,
-                    "removed_group_ids": removed_group_ids,
+                    "type": "tool_start",
+                    "tool": tool_name,
+                    "status": _tool_status(tool_name, tool_input),
                 }
 
-        elif kind == "on_chain_end" and event.get("name") == "update_client_context":
-            output = event.get("data", {}).get("output", {})
-            messages = output.get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                yield {"type": "text", "content": _extract_text(messages[-1].content)}
-            # Emit whatever context fields were touched. case_context is set on case-level
-            # updates and on clear; groups (with their per-group client_context) is set on
-            # group-level updates and on clear.
-            payload = {"type": "context_updated"}
-            if "case_context" in output:
-                payload["case_context"] = output.get("case_context")
-            if "groups" in output:
-                payload["groups"] = output.get("groups")
-            if len(payload) > 1:
-                logger.info(
-                    f"context_updated: case={'case_context' in output} groups={'groups' in output}"
-                )
-                yield payload
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "unknown_tool")
+                logger.info(f"Tool end: {tool_name}")
+                yield {"type": "tool_end", "tool": tool_name}
 
-        elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
-            output = event.get("data", {}).get("output", {})
-            messages = output.get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                content = _extract_text(messages[-1].content)
-                if content:
-                    logger.info(f"{event.get('name')}: emitting text ({len(content)} chars)")
-                    yield {"type": "text", "content": content}
+            elif kind == "on_chain_end" and event.get("name") == "guardrails":
+                messages = event.get("data", {}).get("output", {}).get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    logger.info("guardrails blocked — emitting refusal text")
+                    yield {"type": "text", "content": _extract_text(messages[-1].content)}
+
+            elif kind == "on_chain_end" and event.get("name") == "geo_check":
+                messages = event.get("data", {}).get("output", {}).get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    logger.info("geo_check: non-SF location — emitting refusal text")
+                    yield {"type": "text", "content": _extract_text(messages[-1].content)}
+
+            elif kind == "on_chain_end" and event.get("name") == "classify_groups":
+                groups = event.get("data", {}).get("output", {}).get("groups", [])
+                if groups:
+                    logger.info(f"groups_identified: {len(groups)} group(s) — held until format_complete")
+                else:
+                    # Distinguish "actually off-topic" from "we failed to parse a real
+                    # service request that referenced a prior group by ordinal." The
+                    # off-topic message is misleading when the user clearly mentioned
+                    # a service or a group reference.
+                    lower = question.lower()
+                    seems_on_topic = (
+                        "group" in lower
+                        or any(kw in lower for kw in _ON_TOPIC_KEYWORDS)
+                    )
+                    if seems_on_topic:
+                        logger.info("classify_groups: 0 groups + on-topic signal — emitting clarify message")
+                        yield {
+                            "type": "text",
+                            "content": "I had trouble understanding that as a search. If you're trying to modify a previous group, try referring to it by what it's for (e.g., 'the shelter group') instead of by number — or describe what you're looking for fresh.",
+                        }
+                    else:
+                        logger.info("classify_groups: 0 groups — emitting off-topic fallback")
+                        yield {
+                            "type": "text",
+                            "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
+                        }
+
+            elif kind == "on_chain_end" and event.get("name") == "search_per_group":
+                results = event.get("data", {}).get("output", {}).get("results", {})
+                if results:
+                    logger.info(f"search_complete: {len(results)} group(s)")
+
+            elif kind == "on_chain_end" and event.get("name") == "format_results":
+                output = event.get("data", {}).get("output", {})
+                formatted = output.get("formatted", {})
+                groups = output.get("groups", [])
+                changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
+                removed_group_ids = output.get("removed_group_ids") or []
+                messages = output.get("messages", [])
+                intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
+                if intro:
+                    yield {"type": "text", "content": intro}
+                if formatted:
+                    logger.info(
+                        f"format_complete: {len(formatted)} group(s); changed={changed_group_ids}; removed={removed_group_ids}"
+                    )
+                    yield {
+                        "type": "format_complete",
+                        "formatted": formatted,
+                        "groups": groups,
+                        "changed_group_ids": changed_group_ids,
+                        "removed_group_ids": removed_group_ids,
+                    }
+
+            elif kind == "on_chain_end" and event.get("name") == "update_client_context":
+                output = event.get("data", {}).get("output", {})
+                messages = output.get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    yield {"type": "text", "content": _extract_text(messages[-1].content)}
+                # Emit whatever context fields were touched. case_context is set on case-level
+                # updates and on clear; groups (with their per-group client_context) is set on
+                # group-level updates and on clear.
+                payload = {"type": "context_updated"}
+                if "case_context" in output:
+                    payload["case_context"] = output.get("case_context")
+                if "groups" in output:
+                    payload["groups"] = output.get("groups")
+                if len(payload) > 1:
+                    logger.info(
+                        f"context_updated: case={'case_context' in output} groups={'groups' in output}"
+                    )
+                    yield payload
+
+            elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
+                output = event.get("data", {}).get("output", {})
+                messages = output.get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    content = _extract_text(messages[-1].content)
+                    if content:
+                        logger.info(f"{event.get('name')}: emitting text ({len(content)} chars)")
+                        yield {"type": "text", "content": content}
+    except Exception as e:
+        logger.error(f"stream_agent failed: {e}", exc_info=True)
+        yield {"type": "error", "errorText": f"{e.__class__.__name__}: {e}"}
+        return
 
     # After stream ends, check for pending interrupts (intake HITL)
     async for event in _drain_interrupts(graph, config):
@@ -189,62 +200,73 @@ async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, No
     resume_value = {"action": request.action, "answers": request.answers}
     logger.info(f"stream_resume — thread={request.conversation_id}, action={request.action}")
 
-    async for event in graph.astream_events(Command(resume=resume_value), config=config, version="v2"):
-        kind = event["event"]
+    try:
+        async for event in graph.astream_events(Command(resume=resume_value), config=config, version="v2"):
+            kind = event["event"]
 
-        if kind == "on_tool_start":
-            tool_name = event.get("name", "unknown_tool")
-            tool_input = event["data"].get("input") or {}
-            yield {"type": "tool_start", "tool": tool_name, "status": _tool_status(tool_name, tool_input)}
+            if kind == "on_chain_error":
+                err = event.get("data", {}).get("error")
+                name = event.get("name", "")
+                logger.error(f"on_chain_error in {name!r}: {err}")
+                continue
 
-        elif kind == "on_tool_end":
-            yield {"type": "tool_end", "tool": event.get("name", "unknown_tool")}
+            if kind == "on_tool_start":
+                tool_name = event.get("name", "unknown_tool")
+                tool_input = event["data"].get("input") or {}
+                yield {"type": "tool_start", "tool": tool_name, "status": _tool_status(tool_name, tool_input)}
 
-        elif kind == "on_chain_end" and event.get("name") == "classify_groups":
-            pass  # held until format_complete
+            elif kind == "on_tool_end":
+                yield {"type": "tool_end", "tool": event.get("name", "unknown_tool")}
 
-        elif kind == "on_chain_end" and event.get("name") == "search_per_group":
-            pass  # held until format_complete
+            elif kind == "on_chain_end" and event.get("name") == "classify_groups":
+                pass  # held until format_complete
 
-        elif kind == "on_chain_end" and event.get("name") == "format_results":
-            output = event.get("data", {}).get("output", {})
-            formatted = output.get("formatted", {})
-            groups = output.get("groups", [])
-            changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
-            removed_group_ids = output.get("removed_group_ids") or []
-            messages = output.get("messages", [])
-            intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
-            if intro:
-                yield {"type": "text", "content": intro}
-            if formatted:
-                yield {
-                    "type": "format_complete",
-                    "formatted": formatted,
-                    "groups": groups,
-                    "changed_group_ids": changed_group_ids,
-                    "removed_group_ids": removed_group_ids,
-                }
+            elif kind == "on_chain_end" and event.get("name") == "search_per_group":
+                pass  # held until format_complete
 
-        elif kind == "on_chain_end" and event.get("name") == "update_client_context":
-            output = event.get("data", {}).get("output", {})
-            messages = output.get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                yield {"type": "text", "content": _extract_text(messages[-1].content)}
-            payload = {"type": "context_updated"}
-            if "case_context" in output:
-                payload["case_context"] = output.get("case_context")
-            if "groups" in output:
-                payload["groups"] = output.get("groups")
-            if len(payload) > 1:
-                yield payload
+            elif kind == "on_chain_end" and event.get("name") == "format_results":
+                output = event.get("data", {}).get("output", {})
+                formatted = output.get("formatted", {})
+                groups = output.get("groups", [])
+                changed_group_ids = output.get("changed_group_ids") or [g["group_id"] for g in groups]
+                removed_group_ids = output.get("removed_group_ids") or []
+                messages = output.get("messages", [])
+                intro = messages[0].content if messages and isinstance(messages[0].content, str) else ""
+                if intro:
+                    yield {"type": "text", "content": intro}
+                if formatted:
+                    yield {
+                        "type": "format_complete",
+                        "formatted": formatted,
+                        "groups": groups,
+                        "changed_group_ids": changed_group_ids,
+                        "removed_group_ids": removed_group_ids,
+                    }
 
-        elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
-            output = event.get("data", {}).get("output", {})
-            messages = output.get("messages", [])
-            if messages and isinstance(messages[-1], AIMessage):
-                content = _extract_text(messages[-1].content)
-                if content:
-                    yield {"type": "text", "content": content}
+            elif kind == "on_chain_end" and event.get("name") == "update_client_context":
+                output = event.get("data", {}).get("output", {})
+                messages = output.get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    yield {"type": "text", "content": _extract_text(messages[-1].content)}
+                payload = {"type": "context_updated"}
+                if "case_context" in output:
+                    payload["case_context"] = output.get("case_context")
+                if "groups" in output:
+                    payload["groups"] = output.get("groups")
+                if len(payload) > 1:
+                    yield payload
+
+            elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
+                output = event.get("data", {}).get("output", {})
+                messages = output.get("messages", [])
+                if messages and isinstance(messages[-1], AIMessage):
+                    content = _extract_text(messages[-1].content)
+                    if content:
+                        yield {"type": "text", "content": content}
+    except Exception as e:
+        logger.error(f"stream_resume failed: {e}", exc_info=True)
+        yield {"type": "error", "errorText": f"{e.__class__.__name__}: {e}"}
+        return
 
     async for event in _drain_interrupts(graph, config):
         yield event
