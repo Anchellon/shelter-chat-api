@@ -39,7 +39,7 @@ async def stream_agent(
     logger.info(f"stream_agent start — thread={conversation_id}, q='{question[:80]}'")
 
     async for event in graph.astream_events(
-        {"messages": [HumanMessage(content=question)], "current_time": current_time, "groups": [], "results": {}, "formatted": {}},
+        {"messages": [HumanMessage(content=question)], "current_time": current_time},
         config=config,
         version="v2",
     ):
@@ -99,6 +99,19 @@ async def stream_agent(
             if formatted:
                 logger.info(f"format_complete: {len(formatted)} group(s)")
                 yield {"type": "format_complete", "formatted": formatted, "groups": groups}
+
+        elif kind == "on_chain_end" and event.get("name") == "update_client_context":
+            output = event.get("data", {}).get("output", {})
+            client_context = output.get("client_context")
+            logger.info(f"context_updated: {client_context!r}")
+            yield {"type": "context_updated", "client_context": client_context}
+
+        elif kind == "on_chain_end" and event.get("name") == "converse":
+            output = event.get("data", {}).get("output", {})
+            clarify_question = output.get("clarify_question")
+            if clarify_question:
+                logger.info(f"clarify_request from converse: {clarify_question!r}")
+                yield {"type": "clarify_request", "question": clarify_question}
 
     # After stream ends, check for pending interrupts (intake HITL)
     async for event in _drain_interrupts(graph, config):
