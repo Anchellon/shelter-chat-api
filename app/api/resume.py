@@ -9,6 +9,7 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from app.agent.runner import stream_resume
+from app.api.chat import with_heartbeat
 from app.core.auth import require_user
 from app.core.db import create_referral, save_conversation_summary
 
@@ -30,7 +31,11 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
     has_text = False
 
     try:
-        async for event in stream_resume(request, graph, config):
+        async for event in with_heartbeat(stream_resume(request, graph, config)):
+            if event["type"] == "_heartbeat":
+                yield ": keepalive\n\n"
+                continue
+
             if event["type"] == "text":
                 if not has_text:
                     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
@@ -83,6 +88,9 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                 yield f"data: {json.dumps({'type': 'tool-start', 'tool': event['tool'], 'status': event['status']})}\n\n"
             elif event["type"] == "tool_end":
                 yield f"data: {json.dumps({'type': 'tool-end', 'tool': event['tool']})}\n\n"
+            elif event["type"] == "error":
+                yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
+                return
     except Exception as e:
         logger.error(f"Resume stream error (conv={request.conversation_id}): {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'errorText': str(e)})}\n\n"
