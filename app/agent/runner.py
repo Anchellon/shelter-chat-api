@@ -122,9 +122,19 @@ async def stream_agent(
             messages = output.get("messages", [])
             if messages and isinstance(messages[-1], AIMessage):
                 yield {"type": "text", "content": _extract_text(messages[-1].content)}
-            client_context = output.get("client_context")
-            logger.info(f"context_updated: {client_context!r}")
-            yield {"type": "context_updated", "client_context": client_context}
+            # Emit whatever context fields were touched. case_context is set on case-level
+            # updates and on clear; groups (with their per-group client_context) is set on
+            # group-level updates and on clear.
+            payload = {"type": "context_updated"}
+            if "case_context" in output:
+                payload["case_context"] = output.get("case_context")
+            if "groups" in output:
+                payload["groups"] = output.get("groups")
+            if len(payload) > 1:
+                logger.info(
+                    f"context_updated: case={'case_context' in output} groups={'groups' in output}"
+                )
+                yield payload
 
         elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
             output = event.get("data", {}).get("output", {})
@@ -173,21 +183,51 @@ async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, No
             if formatted:
                 yield {"type": "format_complete", "formatted": formatted, "groups": groups}
 
+        elif kind == "on_chain_end" and event.get("name") == "update_client_context":
+            output = event.get("data", {}).get("output", {})
+            messages = output.get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                yield {"type": "text", "content": _extract_text(messages[-1].content)}
+            payload = {"type": "context_updated"}
+            if "case_context" in output:
+                payload["case_context"] = output.get("case_context")
+            if "groups" in output:
+                payload["groups"] = output.get("groups")
+            if len(payload) > 1:
+                yield payload
+
+        elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
+            output = event.get("data", {}).get("output", {})
+            messages = output.get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                content = _extract_text(messages[-1].content)
+                if content:
+                    yield {"type": "text", "content": content}
+
     async for event in _drain_interrupts(graph, config):
         yield event
 
 
 async def _drain_interrupts(graph, config) -> AsyncGenerator[dict, None]:
-    """After a stream ends, emit any pending interrupt as intake_request or clarify_request."""
+    """After a stream ends, emit any pending interrupt.
+
+    Three interrupt shapes are recognized:
+      - str → clarify_request (from converse node when no prior results)
+      - dict with kind="context_clarify" → context_clarify_request (from update_client_context)
+      - dict with group_id → intake_request (from intake node)
+    """
     try:
         state = await graph.aget_state(config)
         for task in state.tasks:
             for intr in getattr(task, "interrupts", []):
                 data = intr.value if hasattr(intr, "value") else intr
-                # String interrupt = clarify question from converse node
                 if isinstance(data, str):
                     logger.info(f"clarify_request interrupt: {data!r}")
                     yield {"type": "clarify_request", "question": data}
+                elif isinstance(data, dict) and data.get("kind") == "context_clarify":
+                    payload = {k: v for k, v in data.items() if k != "kind"}
+                    logger.info(f"context_clarify_request interrupt: {payload.get('proposed_update')}")
+                    yield {"type": "context_clarify_request", **payload}
                 else:
                     logger.info(f"intake_request interrupt: group_id={data.get('group_id')}")
                     yield {"type": "intake_request", **data}

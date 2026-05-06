@@ -3,20 +3,33 @@ import logging
 import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.types import interrupt
 
 from app.agent.llm import get_llm
-from app.agent.state import ClientContext, NavigatorState
+from app.agent.state import ClientContext, Group, NavigatorState, effective_context
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are updating a client profile for a social services navigator.
+You are updating a client profile for a social services navigator working with a household
+or case that may include MULTIPLE PEOPLE. Each search "group" can be for a different person
+(e.g. group 1 for the parent, group 2 for the teen, group 3 for the grandmother).
 
 The navigator's message may:
-1. SET new client attributes — store them in the appropriate fields
-2. UPDATE existing attributes — modify specific fields only
-3. CLEAR the entire context — when they say "new client", "clear context", "reset", "different client", "next client"
+1. SET case-level facts — true of EVERYONE in the household (e.g. "they live in the Mission",
+   "they're undocumented", "the family speaks Spanish")
+2. SET person-level facts for specific groups — true of one person (e.g. "for group 2 he is 15",
+   "the shelter search is for an adult woman", "she's a senior" when only one group exists)
+3. UPDATE existing fields
+4. CLEAR the entire context — when the navigator says "new client", "clear context", "reset",
+   "different client", "next client" — wipes both case-level and per-group context
+
+Decide the SCOPE of the update:
+- "case" — applies to all people in this case (or no groups exist yet)
+- "groups" — applies to specific named groups; populate target_group_ids
+- "ambiguous" — the fact is about a person but NO group is named and 2+ groups exist;
+  the user must be asked which group(s) it applies to
 
 Map information to these fields (omit a field entirely if it is not mentioned and should not change):
 - age: e.g. "45yo adult", "senior", "teenager", "child under 10"
@@ -40,35 +53,68 @@ Return ONLY a JSON object. No explanation. No markdown fences.
 Format:
 {
   "action": "update" | "clear",
+  "scope": "case" | "groups" | "ambiguous" | null,
+  "target_group_ids": [int] | null,
   "fields": { ...only fields that change... },
   "pending_action": "new_search" | null,
-  "confirmation": "brief 1-2 sentence confirmation to navigator. If pending_action is new_search, end with a confirmation question like 'Want me to search for options?'"
+  "confirmation": "brief 1-2 sentence confirmation. If pending_action is new_search, end with a confirmation question like 'Want me to search for options?'"
 }
 
 Examples:
 
-Message: "My client is a 45yo undocumented woman with 2 kids who speaks Spanish"
-Output: {"action": "update", "fields": {"age": "45yo adult", "gender": "woman", "immigration": "undocumented", "family_status": "2 kids", "language": "Spanish only"}, "pending_action": null, "confirmation": "Got it — 45yo undocumented woman with 2 kids, Spanish-speaking."}
+(no groups exist) Message: "My client is a 45yo undocumented woman who speaks Spanish"
+Output: {"action": "update", "scope": "case", "target_group_ids": null, "fields": {"age": "45yo adult", "gender": "woman", "immigration": "undocumented", "language": "Spanish only"}, "pending_action": null, "confirmation": "Got it — 45yo undocumented woman, Spanish-speaking."}
 
-Message: "She needs emergency housing"
-Output: {"action": "update", "fields": {"housing": "needs emergency housing"}, "pending_action": "new_search", "confirmation": "Got it — added housing need. Want me to search for emergency housing options?"}
+(groups: 1=shelter for adult, 2=youth services for teen) Message: "the family is undocumented"
+Output: {"action": "update", "scope": "case", "target_group_ids": null, "fields": {"immigration": "undocumented"}, "pending_action": null, "confirmation": "Got it — added undocumented status for the household."}
 
-Message: "Actually she's a senior, not 45"
-Output: {"action": "update", "fields": {"age": "senior"}, "pending_action": null, "confirmation": "Updated — client is a senior."}
+(groups: 1=shelter, 2=youth services) Message: "for group 2 he's 15"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [2], "fields": {"age": "15", "gender": "man"}, "pending_action": null, "confirmation": "Updated group 2 — 15yo male."}
+
+(groups: 1=shelter, 2=food) Message: "she's a veteran"
+Output: {"action": "update", "scope": "ambiguous", "target_group_ids": null, "fields": {"employment": "veteran"}, "pending_action": null, "confirmation": "Got it — adding veteran status."}
+
+(only group 1 exists) Message: "she's a senior"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"age": "senior"}, "pending_action": null, "confirmation": "Updated — client is a senior."}
 
 Message: "New client"
-Output: {"action": "clear", "fields": {}, "pending_action": null, "confirmation": "Client context cleared. Ready for a new client."}\
+Output: {"action": "clear", "scope": null, "target_group_ids": null, "fields": {}, "pending_action": null, "confirmation": "Client context cleared. Ready for a new client."}\
 """
 
 
 def _merge_context(existing: ClientContext | None, fields: dict) -> ClientContext:
-    base: ClientContext = dict(existing) if existing else {}
+    base: ClientContext = dict(existing) if existing else {}  # type: ignore[assignment]
     for key, value in fields.items():
         if value is None:
-            base.pop(key, None)
+            base.pop(key, None)  # type: ignore[misc]
         else:
-            base[key] = value
-    return base  # type: ignore[return-value]
+            base[key] = value  # type: ignore[literal-required]
+    return base
+
+
+def _summarise_context(ctx: ClientContext | None) -> str:
+    if not ctx:
+        return "(none)"
+    parts = [f"{k}: {v}" for k, v in ctx.items() if v]
+    return ", ".join(parts) if parts else "(none)"
+
+
+def _build_groups_summary(state: NavigatorState) -> str:
+    """Render existing groups + their effective context for the LLM."""
+    groups = state.get("groups") or []
+    if not groups:
+        return "(no groups yet — context updates apply at case level)"
+    case = state.get("case_context")
+    lines = []
+    for g in groups:
+        eff = effective_context(case, g.get("client_context"))
+        label = g.get("what", "services")
+        if g.get("who"):
+            label += f" for {g['who']}"
+        lines.append(
+            f"- group_id={g['group_id']}: {label} | effective_context: {_summarise_context(eff)}"
+        )
+    return "\n".join(lines)
 
 
 async def update_client_context_node(state: NavigatorState) -> dict:
@@ -81,14 +127,20 @@ async def update_client_context_node(state: NavigatorState) -> dict:
         logger.warning("update_client_context: no human message in state")
         return {}
 
-    current_context = state.get("client_context")
-    current_context_str = json.dumps(current_context) if current_context else "None"
+    case_context = state.get("case_context")
+    groups: list[Group] = state.get("groups") or []
+    groups_summary = _build_groups_summary(state)
+    case_summary = _summarise_context(case_context)
 
     llm = get_llm(settings.classifier_provider, settings.classifier_model, json_mode=True)
 
     response = await llm.ainvoke([
         SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=f"Current context: {current_context_str}\n\nNavigator: {last_human.content}"),
+        HumanMessage(content=(
+            f"Current case context: {case_summary}\n"
+            f"Existing groups:\n{groups_summary}\n\n"
+            f"Navigator: {last_human.content}"
+        )),
     ])
 
     raw = response.content if isinstance(response.content, str) else "{}"
@@ -103,14 +155,17 @@ async def update_client_context_node(state: NavigatorState) -> dict:
         parsed = {}
 
     action = parsed.get("action", "update")
-    fields = parsed.get("fields", {})
+    scope = parsed.get("scope")
+    target_ids = parsed.get("target_group_ids") or []
+    fields = parsed.get("fields") or {}
     pending_action = parsed.get("pending_action")
     confirmation = parsed.get("confirmation", "Got it.")
 
+    # ── Clear: wipe case-level AND every per-group context, plus search state ──
     if action == "clear":
         logger.info("update_client_context: clearing context + zeroing search state")
         return {
-            "client_context": None,
+            "case_context": None,
             "pending_action": pending_action,
             "groups": [],
             "results": {},
@@ -118,11 +173,93 @@ async def update_client_context_node(state: NavigatorState) -> dict:
             "messages": [AIMessage(content=confirmation)],
         }
 
-    new_context = _merge_context(current_context, fields)
-    logger.info(f"update_client_context: updated context → {new_context}")
+    # ── Auto-resolve trivial ambiguity ──
+    # 0 groups → must be case-level. 1 group → no real ambiguity, that's the target.
+    if scope == "ambiguous":
+        if len(groups) == 0:
+            scope = "case"
+        elif len(groups) == 1:
+            scope = "groups"
+            target_ids = [groups[0]["group_id"]]
 
+    # ── Genuine ambiguity: interrupt and ask ──
+    if scope == "ambiguous":
+        clarify_payload = {
+            "kind": "context_clarify",
+            "proposed_update": fields,
+            "groups": [
+                {
+                    "group_id": g["group_id"],
+                    "label": (
+                        f"{g.get('what', 'services')}"
+                        + (f" for {g['who']}" if g.get("who") else "")
+                    ),
+                }
+                for g in groups
+            ],
+            "question": (
+                "Who does this apply to? Pick one or more groups, or 'everyone' "
+                "to apply at the case level."
+            ),
+        }
+        logger.info(f"update_client_context: interrupting for clarify (fields={fields})")
+        resume_value = interrupt(clarify_payload)
+
+        if isinstance(resume_value, dict) and resume_value.get("action") == "cancel":
+            logger.info("update_client_context: clarify cancelled by user")
+            return {
+                "messages": [AIMessage(content="Okay, leaving the context as-is.")],
+            }
+
+        answers = resume_value.get("answers", {}) if isinstance(resume_value, dict) else {}
+        chosen_scope = answers.get("scope")
+        chosen_ids = answers.get("group_ids") or []
+
+        if chosen_scope == "case":
+            scope = "case"
+        else:
+            scope = "groups"
+            target_ids = [int(i) for i in chosen_ids if i is not None]
+            if not target_ids:
+                # User submitted nothing — fall back to case so we don't lose the update
+                logger.warning("update_client_context: clarify returned no group_ids, applying to case")
+                scope = "case"
+
+    # ── Apply the update ──
+    if scope == "case" or not groups:
+        new_case = _merge_context(case_context, fields)
+        logger.info(f"update_client_context: case-level update → {new_case}")
+        return {
+            "case_context": new_case,
+            "pending_action": pending_action,
+            "messages": [AIMessage(content=confirmation)],
+        }
+
+    # scope == "groups"
+    target_set = set(target_ids)
+    updated_groups: list[Group] = []
+    matched = 0
+    for g in groups:
+        if g["group_id"] in target_set:
+            new_ctx = _merge_context(g.get("client_context"), fields)
+            updated_groups.append({**g, "client_context": new_ctx})  # type: ignore[misc]
+            matched += 1
+        else:
+            updated_groups.append(g)
+
+    if matched == 0:
+        # LLM picked groups that don't exist — fall back to case so we don't lose the update
+        logger.warning(f"update_client_context: target_ids {target_ids} don't match any group, applying to case")
+        new_case = _merge_context(case_context, fields)
+        return {
+            "case_context": new_case,
+            "pending_action": pending_action,
+            "messages": [AIMessage(content=confirmation)],
+        }
+
+    logger.info(f"update_client_context: per-group update on {matched} group(s) → fields={fields}")
     return {
-        "client_context": new_context,
+        "groups": updated_groups,
         "pending_action": pending_action,
         "messages": [AIMessage(content=confirmation)],
     }
