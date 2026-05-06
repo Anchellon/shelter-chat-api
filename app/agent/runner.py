@@ -102,16 +102,21 @@ async def stream_agent(
 
         elif kind == "on_chain_end" and event.get("name") == "update_client_context":
             output = event.get("data", {}).get("output", {})
+            messages = output.get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                yield {"type": "text", "content": messages[-1].content}
             client_context = output.get("client_context")
             logger.info(f"context_updated: {client_context!r}")
             yield {"type": "context_updated", "client_context": client_context}
 
-        elif kind == "on_chain_end" and event.get("name") == "converse":
+        elif kind == "on_chain_end" and event.get("name") in ("converse", "clarify_node", "help_node", "acknowledge_node"):
             output = event.get("data", {}).get("output", {})
-            clarify_question = output.get("clarify_question")
-            if clarify_question:
-                logger.info(f"clarify_request from converse: {clarify_question!r}")
-                yield {"type": "clarify_request", "question": clarify_question}
+            messages = output.get("messages", [])
+            if messages and isinstance(messages[-1], AIMessage):
+                content = messages[-1].content
+                if content:
+                    logger.info(f"{event.get('name')}: emitting text ({len(content)} chars)")
+                    yield {"type": "text", "content": content}
 
     # After stream ends, check for pending interrupts (intake HITL)
     async for event in _drain_interrupts(graph, config):
