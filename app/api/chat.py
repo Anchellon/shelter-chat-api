@@ -60,6 +60,12 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                     title=question,
                 )
 
+            elif event["type"] == "context_updated":
+                yield f"data: {json.dumps({'type': 'context_updated', 'client_context': event.get('client_context')})}\n\n"
+
+            elif event["type"] == "clarify_request":
+                yield f"data: {json.dumps({'type': 'clarify_request', 'question': event.get('question', '')})}\n\n"
+
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return  # stream ends here — frontend resumes via POST /chat/resume

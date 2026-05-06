@@ -53,6 +53,12 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                     user_id=config["metadata"]["user_id"],
                     title=title,
                 )
+            elif event["type"] == "context_updated":
+                yield f"data: {json.dumps({'type': 'context_updated', 'client_context': event.get('client_context')})}\n\n"
+
+            elif event["type"] == "clarify_request":
+                yield f"data: {json.dumps({'type': 'clarify_request', 'question': event.get('question', '')})}\n\n"
+
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 return
