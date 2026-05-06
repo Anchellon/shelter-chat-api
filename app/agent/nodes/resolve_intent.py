@@ -24,7 +24,7 @@ Classify the navigator's message into exactly ONE primary intent:
 - refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search.
 - follow_up: Can be answered from existing results without running a new search. Analysis, comparison, ranking, or summarizing what was already found.
 - query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?")
-- set_context: They're providing or updating client demographics ("my client is a 45yo woman", "new client", "she's also pregnant")
+- set_context: They're providing or updating client demographics for the case or for a specific group ("my client is a 45yo woman", "new client", "she's also pregnant", "for group 2 the client is a senior", "the family is undocumented"). This includes attributes like age, gender, language, immigration, health, family status — even when scoped to a specific group.
 - help: They want to know what the assistant can do ("what can you do?", "help", "how does this work?")
 - acknowledge: Confirming or reacting without requesting action ("ok", "thanks", "got it", "sounds good", "yes" with no context)
 - clarify: Message is genuinely too ambiguous to classify — use sparingly, only when truly impossible
@@ -61,6 +61,18 @@ Message: "My client is a 45yo undocumented woman with 2 kids who needs food"
 Output: {{"intent": "set_context", "secondary_intent": "new_search", "secondary_message": "food for 45yo undocumented woman with 2 kids"}}
 
 Message: "My client is a 45yo undocumented woman who speaks Spanish"
+Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
+
+Message: "for group 2, the client is a 70-year-old senior in a wheelchair"
+Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
+
+Message: "group 1's client is also pregnant"
+Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
+
+Message: "actually, the family is undocumented"
+Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
+
+Message: "she's also a domestic violence survivor"
 Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message": null}}
 
 Message: "ok thanks"
