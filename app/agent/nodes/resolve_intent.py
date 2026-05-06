@@ -63,6 +63,24 @@ Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": 
 Message: "tell me more about the one on Tenderloin"  (after a prior org/topic query)
 Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
 
+Message: "Tenderloin"  (terse, after a prior org/topic query about a multi-location org — refers to the Tenderloin branch from the prior list)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "Bayview"  (terse, after a prior org/topic query about a multi-location org)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "the second one"  (after a prior org/topic query — picks an item from the prior list)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "more details"  (after a prior org/topic query)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what about Compass?"  (after a prior org/topic query about YMCA — different org, NOT a follow-up)
+Output: {{"intent": "query", "secondary_intent": null, "secondary_message": null}}
+
+Message: "I need food resources for a senior"  (after a prior org/topic query — clearly a new search)
+Output: {{"intent": "new_search", "secondary_intent": null, "secondary_message": null}}
+
 Message: "My client is a 45yo undocumented woman with 2 kids who needs food"
 Output: {{"intent": "set_context", "secondary_intent": "new_search", "secondary_message": "food for 45yo undocumented woman with 2 kids"}}
 
