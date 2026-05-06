@@ -21,8 +21,8 @@ You are an intent classifier for a social services navigator assistant.
 Classify the navigator's message into exactly ONE primary intent:
 
 - new_search: They want to find services for a client (fresh query describing needs)
-- refine: They want to modify the prior search ("same but open now", "actually she's a senior", "add food")
-- follow_up: They have a question about results already found ("which is closest?", "summarize", "compare these two")
+- refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search.
+- follow_up: Can be answered from existing results without running a new search. Analysis, comparison, ranking, or summarizing what was already found.
 - query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?")
 - set_context: They're providing or updating client demographics ("my client is a 45yo woman", "new client", "she's also pregnant")
 - help: They want to know what the assistant can do ("what can you do?", "help", "how does this work?")
@@ -48,7 +48,10 @@ Output: {{"intent": "new_search", "secondary_intent": null, "secondary_message":
 Message: "Same but only open now"
 Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
 
-Message: "Which of those shelters is closest to the Tenderloin?"
+Message: "Do you have info on shelters in the Tenderloin?"
+Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
+
+Message: "Which of those is closest to 16th and Mission?"
 Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
 
 Message: "What are Glide's current hours?"
@@ -92,11 +95,16 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
     has_groups = bool(state.get("groups"))
     has_results = bool(state.get("results"))
 
-    prior_state = (
-        f"{len(state['groups'])} group(s) with results" if has_results
-        else f"{len(state['groups'])} group(s), no results yet" if has_groups
-        else "no prior search"
-    )
+    if has_results or has_groups:
+        group_labels = [
+            f"{g.get('what', 'services')} in {g.get('where', 'SF')}"
+            for g in state["groups"]
+        ]
+        label_str = ", ".join(group_labels)
+        suffix = "with results" if has_results else "no results yet"
+        prior_state = f"{len(state['groups'])} group(s) ({label_str}) — {suffix}"
+    else:
+        prior_state = "no prior search"
 
     pending_block = (
         _PENDING_ACTION_CONTEXT.format(pending_action=pending_action)
