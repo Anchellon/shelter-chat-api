@@ -222,10 +222,25 @@ def build_intake_node(tools_by_name: dict):
 
         for group in groups:
             # --- Mapping ---
-            mapped_cats = await _map_categories(group["what"], categories)
-            mapped_elig = await _map_eligibilities(group["who"], eligibilities) if group["who"] else []
-            if "Anyone in Need" not in mapped_elig:
-                mapped_elig.append("Anyone in Need")
+            # Reuse already-populated fields. refine_groups preserves these on groups
+            # whose what/who didn't change, so we can skip the LLM call and the intake
+            # question entirely on unchanged groups.
+            existing_cats = group.get("categories") or []
+            existing_elig = group.get("eligibilities") or []
+
+            if existing_cats:
+                mapped_cats = list(existing_cats)
+            else:
+                mapped_cats = await _map_categories(group["what"], categories)
+
+            if existing_elig:
+                mapped_elig = list(existing_elig)
+            elif group["who"]:
+                mapped_elig = await _map_eligibilities(group["who"], eligibilities)
+                if "Anyone in Need" not in mapped_elig:
+                    mapped_elig.append("Anyone in Need")
+            else:
+                mapped_elig = []
 
             # --- Gap detection ---
             gaps = []
@@ -236,7 +251,9 @@ def build_intake_node(tools_by_name: dict):
                     "question": "What type of service are they looking for?",
                     "options": categories,
                 })
-            if not group["who"]:
+            # Ask "who is this for?" only when we have no eligibility info at all.
+            # A populated `who` or a populated `eligibilities` list both count as "we know."
+            if not group["who"] and not mapped_elig:
                 relevant_keys = await _select_relevant_dimensions(
                     group["what"], original_message, list(eligibilities.keys())
                 )

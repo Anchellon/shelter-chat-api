@@ -24,7 +24,7 @@ Rules:
 - Preserve group_id for groups that remain
 - New groups get group_id = max existing + 1, 2, etc.
 - To remove a group, simply omit it from the output
-- Keep all fields — reset categories/eligibilities/lat/lng to empty (intake will re-populate them)
+- Output only the editable search fields (group_id, what, who, where, when, open_now). Downstream code preserves categories/eligibilities/lat/lng on groups whose what/who/where you didn't change.
 - If a per-group client context is provided, factor it into who/what where relevant
 - If no location is mentioned in the change, keep the existing where value
 - Set open_now to true ONLY if the navigator explicitly asks for open services
@@ -32,17 +32,21 @@ Rules:
 Return ONLY a JSON object with a "groups" key. No explanation. No markdown fences.
 
 Format:
-{"groups": [{"group_id": 1, "what": "...", "who": "...", "where": "...", "when": null, "open_now": false, "categories": [], "eligibilities": [], "lat": null, "lng": null}]}
+{"groups": [{"group_id": 1, "what": "...", "who": "...", "where": "...", "when": null, "open_now": false}]}
 
 Examples:
 
 Existing: [{"group_id": 1, "what": "shelter", "who": "adult male", "where": "San Francisco", "when": null, "open_now": false}]
 Change: "same but only open now"
-Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "adult male", "where": "San Francisco", "when": null, "open_now": true, "categories": [], "eligibilities": [], "lat": null, "lng": null}]}
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "adult male", "where": "San Francisco", "when": null, "open_now": true}]}
 
 Existing: [{"group_id": 1, "what": "shelter", "who": "adult", "where": "San Francisco", "when": null, "open_now": false}]
 Change: "actually she's a senior"
-Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "senior woman", "where": "San Francisco", "when": null, "open_now": false, "categories": [], "eligibilities": [], "lat": null, "lng": null}]}\
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "senior woman", "where": "San Francisco", "when": null, "open_now": false}]}
+
+Existing: [{"group_id": 1, "what": "shelter", "who": null, "where": "Larkin St", "when": null, "open_now": false}, {"group_id": 2, "what": "health", "who": null, "where": "Larkin St", "when": null, "open_now": false}]
+Change: "find job resources for the second group"
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": null, "where": "Larkin St", "when": null, "open_now": false}, {"group_id": 2, "what": "health and job resources", "who": null, "where": "Larkin St", "when": null, "open_now": false}]}\
 """
 
 
@@ -105,27 +109,64 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         logger.error(f"refine_groups parse error: {e} | raw: {raw[:300]}")
         return {"groups": existing_groups}
 
-    # Preserve per-group client_context across refine — the LLM is only allowed to
-    # change search params (what/who/where/when), not the person profile attached to a group.
-    prior_context_by_id = {g["group_id"]: g.get("client_context") for g in existing_groups}
+    # Preserve intake-derived fields on groups whose search params didn't change.
+    # This avoids re-running intake/geocoding on groups the navigator didn't touch.
+    prior_by_id = {g["group_id"]: g for g in existing_groups}
 
     groups: list[Group] = []
     for item in groups_data:
         gid = int(item.get("group_id", 1))
+        new_what = str(item.get("what", ""))
+        new_who = item.get("who") or None
+        new_where = str(item.get("where") or "San Francisco")
+        new_when = item.get("when") if item.get("when") not in (None, "null", "") else None
+
+        prior = prior_by_id.get(gid)
+        if prior is not None:
+            # categories derive from `what`, eligibilities from `who`, lat/lng from `where`.
+            # Preserve each only if the source field is unchanged.
+            keep_categories = prior.get("categories") or [] if prior.get("what") == new_what else []
+            keep_eligibilities = prior.get("eligibilities") or [] if prior.get("who") == new_who else []
+            if prior.get("where") == new_where:
+                keep_lat = prior.get("lat")
+                keep_lng = prior.get("lng")
+            else:
+                keep_lat = None
+                keep_lng = None
+            keep_client_context = prior.get("client_context")
+        else:
+            keep_categories = []
+            keep_eligibilities = []
+            keep_lat = None
+            keep_lng = None
+            keep_client_context = None
+
         groups.append(Group(
             group_id=gid,
-            what=str(item.get("what", "")),
-            who=item.get("who") or None,
-            where=str(item.get("where") or "San Francisco"),
-            when=item.get("when") if item.get("when") not in (None, "null", "") else None,
+            what=new_what,
+            who=new_who,
+            where=new_where,
+            when=new_when,
             open_now=bool(item.get("open_now", False)),
-            categories=[],
-            eligibilities=[],
-            lat=None,
-            lng=None,
-            client_context=prior_context_by_id.get(gid),
+            categories=keep_categories,
+            eligibilities=keep_eligibilities,
+            lat=keep_lat,
+            lng=keep_lng,
+            client_context=keep_client_context,
         ))
 
     groups = [g for g in groups if g["what"]]
-    logger.info(f"refine_groups: {len(groups)} refined group(s)")
+    logger.info(
+        "refine_groups: %d refined group(s); preserved=%s",
+        len(groups),
+        [
+            {
+                "id": g["group_id"],
+                "cats": bool(g["categories"]),
+                "elig": bool(g["eligibilities"]),
+                "geo": g["lat"] is not None,
+            }
+            for g in groups
+        ],
+    )
     return {"groups": groups}
