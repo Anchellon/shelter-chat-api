@@ -67,6 +67,12 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                 )
                 yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
 
+            elif event["type"] == "context_updated":
+                yield f"data: {json.dumps({'type': 'context_updated', 'client_context': event['client_context']})}\n\n"
+
+            elif event["type"] == "clarify_request":
+                yield f"data: {json.dumps(event)}\n\n"
+
             elif event["type"] == "intake_request":
                 yield f"data: {json.dumps(event)}\n\n"
                 await save_conversation_summary(
