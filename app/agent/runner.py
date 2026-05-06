@@ -9,6 +9,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_text(content) -> str:
+    """Normalize AIMessage.content to a plain string.
+
+    Anthropic models return a list of content blocks after tool use, e.g.
+    [{"type": "text", "text": "..."}]. Extract and join all text blocks.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content)
+
+
 # Human-readable status messages per tool + input
 def _tool_status(tool_name: str, tool_input: dict) -> str:
     if tool_name == "search_services":
@@ -64,13 +81,13 @@ async def stream_agent(
             messages = event.get("data", {}).get("output", {}).get("messages", [])
             if messages and isinstance(messages[-1], AIMessage):
                 logger.info("guardrails blocked — emitting refusal text")
-                yield {"type": "text", "content": messages[-1].content}
+                yield {"type": "text", "content": _extract_text(messages[-1].content)}
 
         elif kind == "on_chain_end" and event.get("name") == "geo_check":
             messages = event.get("data", {}).get("output", {}).get("messages", [])
             if messages and isinstance(messages[-1], AIMessage):
                 logger.info("geo_check: non-SF location — emitting refusal text")
-                yield {"type": "text", "content": messages[-1].content}
+                yield {"type": "text", "content": _extract_text(messages[-1].content)}
 
         elif kind == "on_chain_end" and event.get("name") == "classify_groups":
             groups = event.get("data", {}).get("output", {}).get("groups", [])
@@ -104,7 +121,7 @@ async def stream_agent(
             output = event.get("data", {}).get("output", {})
             messages = output.get("messages", [])
             if messages and isinstance(messages[-1], AIMessage):
-                yield {"type": "text", "content": messages[-1].content}
+                yield {"type": "text", "content": _extract_text(messages[-1].content)}
             client_context = output.get("client_context")
             logger.info(f"context_updated: {client_context!r}")
             yield {"type": "context_updated", "client_context": client_context}
@@ -113,7 +130,7 @@ async def stream_agent(
             output = event.get("data", {}).get("output", {})
             messages = output.get("messages", [])
             if messages and isinstance(messages[-1], AIMessage):
-                content = messages[-1].content
+                content = _extract_text(messages[-1].content)
                 if content:
                     logger.info(f"{event.get('name')}: emitting text ({len(content)} chars)")
                     yield {"type": "text", "content": content}
