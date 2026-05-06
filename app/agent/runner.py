@@ -156,13 +156,18 @@ async def stream_resume(request, graph, config: dict) -> AsyncGenerator[dict, No
 
 
 async def _drain_interrupts(graph, config) -> AsyncGenerator[dict, None]:
-    """After a stream ends, emit any pending interrupt as intake_request."""
+    """After a stream ends, emit any pending interrupt as intake_request or clarify_request."""
     try:
         state = await graph.aget_state(config)
         for task in state.tasks:
             for intr in getattr(task, "interrupts", []):
                 data = intr.value if hasattr(intr, "value") else intr
-                logger.info(f"intake_request interrupt: group_id={data.get('group_id')}")
-                yield {"type": "intake_request", **data}
+                # String interrupt = clarify question from converse node
+                if isinstance(data, str):
+                    logger.info(f"clarify_request interrupt: {data!r}")
+                    yield {"type": "clarify_request", "question": data}
+                else:
+                    logger.info(f"intake_request interrupt: group_id={data.get('group_id')}")
+                    yield {"type": "intake_request", **data}
     except Exception as e:
         logger.warning(f"Could not check graph state for interrupts: {e}")
