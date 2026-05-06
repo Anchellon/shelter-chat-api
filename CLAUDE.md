@@ -115,6 +115,20 @@ Provider options: `"ollama"` (default), `"openai"`, `"anthropic"`. Factory in `a
 
 ---
 
+## Grounding
+
+All factual content (org names, addresses, hours, eligibilities) flows from Postgres through MCP tools — there is **no general-knowledge fallback**. `search_per_group` and the converse query mini-agent (`_handle_query` in `app/agent/nodes/converse.py`) only render what their tools return; the system prompts explicitly forbid inventing data.
+
+The LLM is still the rendering layer, so the constraint is **soft, not hard**:
+
+- **Follow-ups** (`_handle_follow_up`) answer from `results` and `last_query_services` already in state — no fresh tool calls. Cited fields (addresses, service IDs, names) come straight out of saved dicts and are essentially safe.
+- **Query path** (`_handle_query`) tool-calls and synthesizes; outputs the LLM's prose grounded in tool results plus captures the raw services into `last_query` / `last_query_services` for the next turn.
+- **Derived/comparative statements** ("closer to BART", "good fit for your client") are LLM reasoning on top of grounded data — first place drift would show up if it ever does.
+
+If hallucinations become an issue, options are: structured output instead of prose, an evaluator pass that verifies claims against tool results, or surfacing the source field name inline in the rendered answer.
+
+---
+
 ## Database
 
 PostgreSQL via `psycopg` (async). Migrations managed with Flyway (`migrations/V*.sql`).
