@@ -54,14 +54,14 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                     formatted=formatted,
                 )
                 yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
+
+            elif event["type"] == "intake_request":
+                yield f"data: {json.dumps(event)}\n\n"
                 await save_conversation_summary(
                     thread_id=conversation_id,
                     user_id=config["metadata"]["user_id"],
                     title=question,
                 )
-
-            elif event["type"] == "intake_request":
-                yield f"data: {json.dumps(event)}\n\n"
                 return  # stream ends here — frontend resumes via POST /chat/resume
 
     except Exception as e:
@@ -69,6 +69,11 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
         yield f"data: {json.dumps({'type': 'error', 'errorText': str(e)})}\n\n"
         return
 
+    await save_conversation_summary(
+        thread_id=conversation_id,
+        user_id=config["metadata"]["user_id"],
+        title=question,
+    )
     logger.info(f"SSE end — msg={msg_id}, {chunk_count} chunks")
     yield f"data: {json.dumps({'type': 'text-end', 'id': msg_id})}\n\n"
     yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
