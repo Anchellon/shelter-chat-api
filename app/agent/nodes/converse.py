@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _MAX_TOOL_ITERATIONS = 3
 
 _FOLLOW_UP_SYSTEM = """\
-You are a social services navigator assistant. Answer the navigator's question based on the prior search results below.
+You are a social services navigator assistant. Answer the navigator's question based on the prior context below.
 
 Guidelines:
 - Answer directly and concisely
@@ -22,9 +22,12 @@ Guidelines:
 - Be honest about real-time data you don't have (current waitlist status, live capacity) — but still give a useful recommendation based on what you know
 - For broad questions spanning multiple searches ("summarize everything we found today"), read the full conversation history provided — not just the latest results
 - Each group below is for a specific person in the case; their effective client profile is shown — factor it into your answer
+- If the question is about a named org / topic from the prior query (e.g. "what locations are available?", "what about the Tenderloin one?"), answer from the "Prior org/topic query" section. When the navigator asks about locations, list each service grouped by its address/neighborhood — do not merge across locations.
 
 Prior results:
 {results_summary}
+
+Prior org/topic query: {query_context}
 
 Case context: {case_context}\
 """
@@ -33,16 +36,17 @@ _QUERY_SYSTEM = """\
 You are a social services navigator assistant with access to a directory of organizations and services in San Francisco.
 
 Use the available tools to look up information about organizations and services:
-- search_by_name: look up an organization by name — use this first for any named org (e.g. "Glide", "Compass Family")
+- search_by_name: look up an organization by name — use this first for any named org (e.g. "Glide", "Compass Family", "YMCA")
 - search_services: semantic search for services by description — use as fallback if search_by_name returns nothing
 - get_service_details: fetch full details for a specific service by ID — use once you've identified the right org
 
 Guidelines:
 - For named org questions, always start with search_by_name
-- Call get_service_details on the most relevant result to get hours, eligibility, contact info
+- If the navigator asks for hours/eligibility of one specific service, call get_service_details on that service
+- If the navigator asks broadly about an org with multiple locations (e.g. "what does the YMCA offer?"), DO NOT call get_service_details on every result. Present what search_by_name returned, **grouped by location/address** (one section per distinct address), then ask which location or program they want more details on.
+- Never merge program details across different locations into one combined list — readers can't tell which programs run where.
 - Cap tool calls at {max_iterations} iterations total
 - If tools return nothing useful after {max_iterations} tries, say honestly that you couldn't find the organization
-- Answer concisely — focus on exactly what the navigator asked
 - Do not invent or guess information not returned by the tools
 - If case context is set, mention how services align with the client's situation
 
@@ -98,6 +102,51 @@ def _unwrap_tool_result(result) -> str:
     return str(result)
 
 
+def _parse_services_from_tool_result(raw) -> list[dict]:
+    """Extract service dicts from an MCP tool result, regardless of wrapper shape."""
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict) and "text" in raw[0]:
+        try:
+            parsed = json.loads(raw[0]["text"])
+            if isinstance(parsed, list):
+                return [s for s in parsed if isinstance(s, dict)]
+        except Exception:
+            return []
+    if isinstance(raw, list):
+        return [s for s in raw if isinstance(s, dict)]
+    return []
+
+
+def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
+    """State update for converse query — always emits the AI message, plus the
+    captured services and originating question when the query produced any."""
+    update: dict = {"messages": [AIMessage(content=content)]}
+    if services:
+        update["last_query"] = query_text
+        update["last_query_services"] = services
+        logger.info(f"converse query: captured {len(services)} service(s) for follow-up")
+    return update
+
+
+def _format_query_context(query: str | None, services: list[dict]) -> str:
+    if not services:
+        return "None"
+    lines = [f"Question: {query!r}" if query else "Question: (unrecorded)"]
+    lines.append(f"{len(services)} service(s) returned:")
+    for svc in services[:20]:
+        name = svc.get("name", "Unknown")
+        org = svc.get("organization_name", "")
+        addr_parts = [p for p in (svc.get("address"), svc.get("city")) if p]
+        location = ", ".join(addr_parts)
+        sid = svc.get("id")
+        line = f"- [id={sid}] {name}"
+        if org:
+            line += f" ({org})"
+        if location:
+            line += f" — {location}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def build_converse_node(tools_by_name: dict):
     """
     Factory — returns converse_node with MCP tools in closure.
@@ -115,8 +164,11 @@ def build_converse_node(tools_by_name: dict):
         formatted = state.get("formatted") or {}
         groups = state.get("groups") or []
         case_context = state.get("case_context")
+        last_query = state.get("last_query")
+        last_query_services = state.get("last_query_services") or []
 
         results_summary = _format_results_summary(results, formatted, groups, case_context)
+        query_context = _format_query_context(last_query, last_query_services)
         context_str = _context_summary(case_context)
 
         # For session-spanning questions, include recent conversation history
@@ -130,6 +182,7 @@ def build_converse_node(tools_by_name: dict):
 
         system = _FOLLOW_UP_SYSTEM.format(
             results_summary=results_summary,
+            query_context=query_context,
             case_context=context_str,
         )
 
@@ -139,7 +192,7 @@ def build_converse_node(tools_by_name: dict):
         if last_human:
             prompt_messages.append(HumanMessage(content=last_human.content))
 
-        if not results and not formatted:
+        if not results and not formatted and not last_query_services:
             extra = interrupt("I don't have any search results to reference. What would you like to know?")
             prompt_messages.append(HumanMessage(content=str(extra)))
 
@@ -185,6 +238,10 @@ def build_converse_node(tools_by_name: dict):
             HumanMessage(content=last_human.content),
         ]
 
+        # Capture the latest service list returned by a search tool so follow-ups
+        # like "what locations are available?" can reason about them from state.
+        captured_services: list[dict] = []
+
         for iteration in range(_MAX_TOOL_ITERATIONS):
             response = await llm_with_tools.ainvoke(tool_messages)
             tool_messages.append(response)
@@ -192,7 +249,7 @@ def build_converse_node(tools_by_name: dict):
             if not response.tool_calls:
                 # LLM has finished — return the answer
                 logger.info(f"converse query: answered after {iteration} tool calls")
-                return {"messages": [AIMessage(content=response.content)]}
+                return _query_state_update(response.content, last_human.content, captured_services)
 
             # Execute all tool calls in this iteration
             for tc in response.tool_calls:
@@ -204,6 +261,10 @@ def build_converse_node(tools_by_name: dict):
                     try:
                         raw = await tool.ainvoke(tc["args"])
                         tool_result = _unwrap_tool_result(raw)
+                        if tool_name in ("search_by_name", "search_services"):
+                            services = _parse_services_from_tool_result(raw)
+                            if services:
+                                captured_services = services
                     except Exception as e:
                         tool_result = f"Tool error: {e}"
                         logger.error(f"converse query tool error ({tool_name}): {e}")
@@ -216,7 +277,7 @@ def build_converse_node(tools_by_name: dict):
         # Exceeded max iterations — ask LLM to summarize with what it has
         final_response = await get_llm(settings.formatter_provider, settings.formatter_model).ainvoke(tool_messages)
         logger.info("converse query: max iterations reached, returning best answer")
-        return {"messages": [AIMessage(content=final_response.content)]}
+        return _query_state_update(final_response.content, last_human.content, captured_services)
 
     async def converse_node(state: NavigatorState) -> dict:
         intent = state.get("intent") or "follow_up"

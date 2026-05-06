@@ -22,8 +22,8 @@ Classify the navigator's message into exactly ONE primary intent:
 
 - new_search: They want to find services for a client (fresh query describing needs)
 - refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search. **Ordinal references to existing groups ("first group", "second group", "the third group", "the shelter group") always signal refine** — the navigator is modifying, removing, or re-targeting a prior group, not starting over. This holds even if the referenced ordinal doesn't exist (e.g., asking about the "second group" when only one exists) — refine_groups handles that case.
-- follow_up: Can be answered from existing results without running a new search. Analysis, comparison, ranking, or summarizing what was already found.
-- query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?")
+- follow_up: Can be answered from existing results OR from a prior named-org/topic query (see prior_state) without running a new search. Analysis, comparison, ranking, summarizing what was already found, or asking about locations/services from the prior query ("what locations are available?", "what about the one in the Tenderloin?", "list the addresses").
+- query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?", "what does the YMCA offer?")
 - set_context: They're providing or updating client demographics for the case or for a specific group ("my client is a 45yo woman", "new client", "she's also pregnant", "for group 2 the client is a senior", "the family is undocumented"). This includes attributes like age, gender, language, immigration, health, family status — even when scoped to a specific group.
 - help: They want to know what the assistant can do ("what can you do?", "help", "how does this work?")
 - acknowledge: Confirming or reacting without requesting action ("ok", "thanks", "got it", "sounds good", "yes" with no context)
@@ -32,7 +32,7 @@ Classify the navigator's message into exactly ONE primary intent:
 Rules:
 - Prefer a concrete intent over "clarify" — only resort to clarify if a reasonable guess is impossible
 - "refine" only applies when there are prior search groups to modify
-- "follow_up" only applies when there are prior search results to reference
+- "follow_up" only applies when there are prior search results OR a prior org/topic query to reference
 - If the message combines set_context with a service need ("my client is 45 and needs food"), primary = "set_context", secondary_intent = "new_search", secondary_message = the service need portion
 - Only set secondary_intent when the message clearly contains two distinct actionable intents
 {pending_action_context}
@@ -56,6 +56,12 @@ Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": 
 
 Message: "What are Glide's current hours?"
 Output: {{"intent": "query", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what locations are available?"  (after a prior org/topic query)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "tell me more about the one on Tenderloin"  (after a prior org/topic query)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
 
 Message: "My client is a 45yo undocumented woman with 2 kids who needs food"
 Output: {{"intent": "set_context", "secondary_intent": "new_search", "secondary_message": "food for 45yo undocumented woman with 2 kids"}}
@@ -118,7 +124,11 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
     pending_action = state.get("pending_action")
     has_groups = bool(state.get("groups"))
     has_results = bool(state.get("results"))
+    last_query = state.get("last_query")
+    last_query_services = state.get("last_query_services") or []
+    has_query_context = bool(last_query_services)
 
+    state_parts: list[str] = []
     if has_results or has_groups:
         group_labels = [
             f"{g.get('what', 'services')} in {g.get('where', 'SF')}"
@@ -126,9 +136,12 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
         ]
         label_str = ", ".join(group_labels)
         suffix = "with results" if has_results else "no results yet"
-        prior_state = f"{len(state['groups'])} group(s) ({label_str}) — {suffix}"
-    else:
-        prior_state = "no prior search"
+        state_parts.append(f"{len(state['groups'])} group(s) ({label_str}) — {suffix}")
+    if has_query_context:
+        state_parts.append(
+            f"prior org/topic query {last_query!r} ({len(last_query_services)} service(s) available for follow-up)"
+        )
+    prior_state = "; ".join(state_parts) if state_parts else "no prior search"
 
     pending_block = (
         _PENDING_ACTION_CONTEXT.format(pending_action=pending_action)
@@ -169,8 +182,8 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
     if intent == "refine" and not has_groups:
         logger.info("resolve_intent: refine with no prior groups → new_search")
         intent = "new_search"
-    if intent == "follow_up" and not has_results:
-        logger.info("resolve_intent: follow_up with no prior results → new_search")
+    if intent == "follow_up" and not has_results and not has_query_context:
+        logger.info("resolve_intent: follow_up with no prior results or query → new_search")
         intent = "new_search"
 
     # When confirming a pending action, carry the triggering message forward so

@@ -47,6 +47,11 @@ class NavigatorState(TypedDict):
     pending_action: str | None
     changed_group_ids: list[int]  # group_ids whose search params changed this turn (all on new_search; diff on refine)
     removed_group_ids: list[int]  # group_ids that existed in the prior turn but were dropped this turn (refine only)
+    # Last named-org / topic question handled by the converse `query` mini-agent and the
+    # services it returned. Persisted so follow-ups like "what locations are available?"
+    # can be answered from state without re-fetching.
+    last_query: str | None
+    last_query_services: list[dict]
 
 
 def effective_context(
