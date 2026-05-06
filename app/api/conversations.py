@@ -54,26 +54,7 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
     if stored_user_id and stored_user_id != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Convert messages to frontend format
-    messages = []
-    for m in state.values.get("messages", []):
-        if isinstance(m, HumanMessage) and m.content:
-            messages.append({
-                "id": m.id or f"msg_{len(messages)}",
-                "role": "user",
-                "type": "text",
-                "content": m.content,
-            })
-        elif isinstance(m, AIMessage):
-            content = _extract_text(m.content)
-            if content.strip():
-                messages.append({
-                    "id": m.id or f"msg_{len(messages)}",
-                    "role": "assistant",
-                    "type": "text",
-                    "content": content,
-                })
-
+    # Fetch referrals first so we can look them up while iterating messages
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         referral_rows = await conn.execute(
             """
@@ -94,6 +75,42 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(require_
             }
             async for r in referral_rows
         ]
+
+    referrals_by_id = {r["id"]: r for r in referrals}
+
+    # Convert messages to frontend format; synthetic referral markers are inlined
+    # in their natural position so the frontend gets a pre-ordered list.
+    messages = []
+    for m in state.values.get("messages", []):
+        if isinstance(m, HumanMessage) and m.content:
+            messages.append({
+                "id": m.id or f"msg_{len(messages)}",
+                "role": "user",
+                "type": "text",
+                "content": m.content,
+            })
+        elif isinstance(m, AIMessage):
+            if m.additional_kwargs.get("type") == "referral":
+                referral_id = m.additional_kwargs.get("referral_id")
+                ref = referrals_by_id.get(referral_id) if referral_id else None
+                if referral_id:
+                    messages.append({
+                        "id": m.id,
+                        "role": "assistant",
+                        "type": "referral",
+                        "content": "",
+                        "referralId": referral_id,
+                        "groups": ref["groups"] if ref else [],
+                    })
+            else:
+                content = _extract_text(m.content)
+                if content.strip():
+                    messages.append({
+                        "id": m.id or f"msg_{len(messages)}",
+                        "role": "assistant",
+                        "type": "text",
+                        "content": content,
+                    })
 
     return {
         "id": conversation_id,

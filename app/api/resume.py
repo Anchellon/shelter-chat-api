@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -45,6 +46,14 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                     user_id=config["metadata"]["user_id"],
                     groups=groups,
                     formatted=formatted,
+                )
+                await graph.aupdate_state(
+                    config,
+                    {"messages": [AIMessage(
+                        content="",
+                        id=f"referral_{referral_id}",
+                        additional_kwargs={"type": "referral", "referral_id": referral_id},
+                    )]},
                 )
                 yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
                 title = f"{groups[0].get('what', 'Search')} near {groups[0].get('where', 'unknown')}" if groups else "Search"

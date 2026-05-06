@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
 from app.agent.runner import stream_agent
@@ -52,6 +53,17 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                     user_id=config["metadata"]["user_id"],
                     groups=groups,
                     formatted=formatted,
+                )
+                # Inject a synthetic marker into the LangGraph checkpoint so that
+                # GET /conversations/{id} can reconstruct the exact message order
+                # without positional heuristics.
+                await graph.aupdate_state(
+                    config,
+                    {"messages": [AIMessage(
+                        content="",
+                        id=f"referral_{referral_id}",
+                        additional_kwargs={"type": "referral", "referral_id": referral_id},
+                    )]},
                 )
                 yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'referral_id': referral_id})}\n\n"
 
