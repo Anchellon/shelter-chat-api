@@ -169,10 +169,13 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         ))
 
     groups = [g for g in groups if g["what"]]
+    new_ids = {g["group_id"] for g in groups}
+    removed_group_ids = [gid for gid in prior_by_id if gid not in new_ids]
     logger.info(
-        "refine_groups: %d refined group(s); changed=%s; preserved=%s",
+        "refine_groups: %d refined group(s); changed=%s; removed=%s; preserved=%s",
         len(groups),
         changed_group_ids,
+        removed_group_ids,
         [
             {
                 "id": g["group_id"],
@@ -183,4 +186,8 @@ async def refine_groups_node(state: NavigatorState) -> dict:
             for g in groups
         ],
     )
-    return {"groups": groups, "changed_group_ids": changed_group_ids}
+    return {
+        "groups": groups,
+        "changed_group_ids": changed_group_ids,
+        "removed_group_ids": removed_group_ids,
+    }

@@ -91,11 +91,13 @@ async def list_referrals(user_id: str = Depends(require_user)):
                        jsonb_set(grp, '{service_count}', to_jsonb(jsonb_array_length(grp->'service_ids')))
                        - 'service_ids'
                    ) AS groups,
+                   changed_group_ids,
+                   removed_group_ids,
                    created_at
             FROM referrals,
                  jsonb_array_elements(groups) AS grp
             WHERE user_id = %s AND saved = TRUE
-            GROUP BY id, thread_id, title, saved, created_at
+            GROUP BY id, thread_id, title, saved, changed_group_ids, removed_group_ids, created_at
             ORDER BY created_at DESC
             LIMIT 50
             """,
@@ -108,7 +110,9 @@ async def list_referrals(user_id: str = Depends(require_user)):
                 "title": row[2],
                 "saved": row[3],
                 "groups": row[4],
-                "created_at": row[5].isoformat(),
+                "changed_group_ids": row[5] or [],
+                "removed_group_ids": row[6] or [],
+                "created_at": row[7].isoformat(),
             }
             async for row in rows
         ]
@@ -122,7 +126,7 @@ async def get_referral(referral_id: UUID, user_id: str = Depends(require_user)):
         row = await (
             await conn.execute(
                 """
-                SELECT id, thread_id, title, saved, groups, created_at
+                SELECT id, thread_id, title, saved, groups, changed_group_ids, removed_group_ids, created_at
                 FROM referrals
                 WHERE id = %s AND user_id = %s
                 """,
@@ -139,7 +143,9 @@ async def get_referral(referral_id: UUID, user_id: str = Depends(require_user)):
         "title": row[2],
         "saved": row[3],
         "groups": row[4],
-        "created_at": row[5].isoformat(),
+        "changed_group_ids": row[5] or [],
+        "removed_group_ids": row[6] or [],
+        "created_at": row[7].isoformat(),
     }
 
 

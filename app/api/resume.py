@@ -42,11 +42,14 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                 formatted = event["formatted"]
                 groups = event.get("groups", [])
                 changed_group_ids = event.get("changed_group_ids", [])
+                removed_group_ids = event.get("removed_group_ids", [])
                 referral_id = await create_referral(
                     thread_id=request.conversation_id,
                     user_id=config["metadata"]["user_id"],
                     groups=groups,
                     formatted=formatted,
+                    changed_group_ids=changed_group_ids,
+                    removed_group_ids=removed_group_ids,
                 )
                 await graph.aupdate_state(
                     config,
@@ -56,7 +59,7 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                         additional_kwargs={"type": "referral", "referral_id": referral_id},
                     )]},
                 )
-                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'changed_group_ids': changed_group_ids, 'referral_id': referral_id})}\n\n"
+                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'changed_group_ids': changed_group_ids, 'removed_group_ids': removed_group_ids, 'referral_id': referral_id})}\n\n"
                 title = f"{groups[0].get('what', 'Search')} near {groups[0].get('where', 'unknown')}" if groups else "Search"
                 await save_conversation_summary(
                     thread_id=request.conversation_id,

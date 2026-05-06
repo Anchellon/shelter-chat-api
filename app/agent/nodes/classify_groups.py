@@ -145,4 +145,5 @@ async def classify_groups_node(state: NavigatorState) -> dict:
         "groups": groups,
         "secondary_message": None,
         "changed_group_ids": [g["group_id"] for g in groups],
+        "removed_group_ids": [],
     }

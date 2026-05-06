@@ -33,6 +33,8 @@ async def create_referral(
     user_id: str,
     groups: list[dict[str, Any]],
     formatted: dict[str, Any],
+    changed_group_ids: list[int] | None = None,
+    removed_group_ids: list[int] | None = None,
 ) -> str:
     """Insert a referral row and return its UUID string. Raises on failure."""
     merged_groups = []
@@ -51,11 +53,18 @@ async def create_referral(
         row = await (
             await conn.execute(
                 """
-                INSERT INTO referrals (user_id, thread_id, title, groups)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO referrals (user_id, thread_id, title, groups, changed_group_ids, removed_group_ids)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (user_id, thread_id, title, psycopg.types.json.Jsonb(merged_groups)),
+                (
+                    user_id,
+                    thread_id,
+                    title,
+                    psycopg.types.json.Jsonb(merged_groups),
+                    psycopg.types.json.Jsonb(changed_group_ids or []),
+                    psycopg.types.json.Jsonb(removed_group_ids or []),
+                ),
             )
         ).fetchone()
         await conn.commit()

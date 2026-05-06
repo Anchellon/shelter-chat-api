@@ -77,7 +77,7 @@ Both `POST /chat` and `POST /chat/resume` return `text/event-stream`. Events emi
 | `tool-start` | `tool`, `status` | human-readable status string |
 | `tool-end` | `tool` | |
 | `groups_identified` | `groups` | list of Group objects |
-| `format_complete` | `formatted`, `groups`, `referral_id` | final structured results; triggers referral creation |
+| `format_complete` | `formatted`, `groups`, `changed_group_ids`, `removed_group_ids`, `referral_id` | final structured results; `changed_group_ids` lists groups whose search params changed (all on new search, diff on refine); `removed_group_ids` lists groups dropped this turn (refine only); triggers referral creation |
 | `intake_request` | `group_id`, `group_label`, `steps` | HITL pause; frontend must POST /chat/resume |
 | `error` | `errorText` | stream aborts |
 | `finish` | `finishReason` | always `"stop"` |
@@ -123,12 +123,14 @@ PostgreSQL via `psycopg` (async). Migrations managed with Flyway (`migrations/V*
 |-------|---------|
 | `checkpoints` + related | LangGraph conversation state (managed by `AsyncPostgresSaver`) |
 | `conversation_summaries` | `(thread_id, user_id, title)` — index of past conversations |
-| `referrals` | `(id UUID, user_id, thread_id, title, saved bool, groups JSONB)` — search results saved per turn |
+| `referrals` | `(id UUID, user_id, thread_id, title, saved bool, groups JSONB, changed_group_ids JSONB, removed_group_ids JSONB)` — search results saved per turn, plus refine-diff metadata |
 
 **`referrals.groups`** is a JSONB array of merged Group + formatted objects:
 ```json
 [{"group_id": 1, "what": "...", ..., "rationale": "...", "service_ids": [123]}]
 ```
+
+**`referrals.changed_group_ids`** / **`referrals.removed_group_ids`** are JSONB arrays of `group_id` integers, used by the frontend to render the "Updated"/"Removed" affordances per turn on reload. Both default to `[]`.
 
 DB helpers live in `app/core/db.py`: `save_conversation_summary()`, `create_referral()`. Direct psycopg queries elsewhere in API routes use `psycopg.AsyncConnection.connect(settings.database_url)`.
 
