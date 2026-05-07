@@ -128,7 +128,15 @@ async def stream_agent(
                         logger.info("classify_groups: 0 groups — emitting off-topic fallback")
                         yield {
                             "type": "text",
-                            "content": "I can only help find social services, shelters, food, health resources, and other support services in San Francisco. Please describe what you or someone you know is looking for.",
+                            "content": (
+                                "I couldn't pick out a specific need from that. "
+                                "I can search for services in San Francisco — shelter, housing, food, "
+                                "health care, mental health, substance use treatment, jobs, legal aid, "
+                                "domestic violence support, and basic needs (clothing, hygiene). "
+                                "Try describing what your client needs, e.g. \"emergency shelter for a "
+                                "single adult male in the Tenderloin\" or \"food pantries open on weekends\". "
+                                "Or ask \"what is available?\" for a fuller overview."
+                            ),
                         }
 
             elif kind == "on_chain_end" and event.get("name") == "search_per_group":

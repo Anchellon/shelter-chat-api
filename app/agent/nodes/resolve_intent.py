@@ -25,7 +25,7 @@ Classify the navigator's message into exactly ONE primary intent:
 - follow_up: Can be answered from existing results OR from a prior named-org/topic query (see prior_state) without running a new search. Analysis, comparison, ranking, summarizing what was already found, or asking about locations/services from the prior query ("what locations are available?", "what about the one in the Tenderloin?", "list the addresses", "i want to learn more about the one in X").
 - query: They're asking about a NEW named org not previously discussed ("what are Glide's hours?", "does Compass accept pets?", "what does the YMCA offer?"). If prior_state already has a prior org/topic query for org X, references to anything WITHIN X — a branch, neighborhood, location, ordinal, or attribute — are `follow_up`, NOT `query`.
 - set_context: They're providing or updating client demographics for the case or for a specific group ("my client is a 45yo woman", "new client", "she's also pregnant", "for group 2 the client is a senior", "the family is undocumented"). This includes attributes like age, gender, language, immigration, health, family status — even when scoped to a specific group.
-- help: They want to know what the assistant can do ("what can you do?", "help", "how does this work?")
+- help: They want to know what the assistant can do OR what categories/types of services are available. Includes capability questions ("what can you do?", "help", "how does this work?") AND category-listing questions ("what's available?", "what types of services exist?", "what kinds of resources are here?", "what categories can you search?", "what services are in SF?"). When in doubt between help and clarify for a vague meta-question with no service mentioned, prefer help.
 - acknowledge: Confirming or reacting without requesting action ("ok", "thanks", "got it", "sounds good", "yes" with no context)
 - clarify: Message is genuinely too ambiguous to classify — use sparingly, only when truly impossible. **NEVER use clarify if prior_state mentions prior search results or a prior org/topic query** — the message is responding to that context; classify as `follow_up` instead.
 
@@ -108,6 +108,18 @@ Output: {{"intent": "set_context", "secondary_intent": null, "secondary_message"
 
 Message: "ok thanks"
 Output: {{"intent": "acknowledge", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what is available?"
+Output: {{"intent": "help", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what types of services exist in SF?"
+Output: {{"intent": "help", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what kinds of services can you search for?"
+Output: {{"intent": "help", "secondary_intent": null, "secondary_message": null}}
+
+Message: "what categories do you have?"
+Output: {{"intent": "help", "secondary_intent": null, "secondary_message": null}}
 
 Message: "drop the second group"
 Output: {{"intent": "refine", "secondary_intent": null, "secondary_message": null}}
