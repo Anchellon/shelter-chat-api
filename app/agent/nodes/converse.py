@@ -156,6 +156,39 @@ def _merge_service_into(by_id: dict, svc: dict) -> None:
             existing[k] = v
 
 
+_ENRICH_TOP_N = 20
+
+
+async def _enrich_captured_services(captured_by_id: dict, tools_by_name: dict) -> None:
+    """Backfill full detail fields onto captured services via get_service_details_batch.
+
+    The query LLM may answer after a single search_services call without ever calling
+    get_service_details, leaving captured_by_id with skinny search-hit rows (no
+    address, phone, hours, etc.). Follow-ups that drill into a specific location then
+    have nothing to render. We enrich deterministically rather than relying on the
+    LLM to remember the soft prompt instruction.
+    """
+    if not captured_by_id:
+        return
+    batch_tool = tools_by_name.get("get_service_details_batch")
+    if batch_tool is None:
+        return
+    # Skinny search rows lack `address` — that's our marker for "needs enrichment".
+    # Cap matches what _format_query_context actually surfaces to the follow-up LLM.
+    skinny_ids = [sid for sid, svc in captured_by_id.items() if not svc.get("address")]
+    if not skinny_ids:
+        return
+    ids_to_enrich = skinny_ids[:_ENRICH_TOP_N]
+    try:
+        raw = await batch_tool.ainvoke({"service_ids": ids_to_enrich})
+        details = _parse_services_from_tool_result(raw)
+        for d in details:
+            _merge_service_into(captured_by_id, d)
+        logger.info(f"converse query: enriched {len(details)} service(s) via batch detail fetch")
+    except Exception as e:
+        logger.warning(f"converse query: enrichment failed: {e}")
+
+
 def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
     """State update for converse query — always emits the AI message, plus the
     captured services and originating question when the query produced any."""
@@ -217,7 +250,7 @@ def build_converse_node(tools_by_name: dict):
             if isinstance(m, HumanMessage):
                 history_lines.append(f"Navigator: {m.content}")
             elif isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip():
-                history_lines.append(f"Assistant: {m.content[:200]}")
+                history_lines.append(f"Assistant: {m.content[:2000]}")
         history_str = "\n".join(history_lines[:-1])  # exclude the current message
 
         system = _FOLLOW_UP_SYSTEM.format(
@@ -292,6 +325,7 @@ def build_converse_node(tools_by_name: dict):
             if not response.tool_calls:
                 # LLM has finished — return the answer
                 logger.info(f"converse query: answered after {iteration} tool calls")
+                await _enrich_captured_services(captured_by_id, tools_by_name)
                 return _query_state_update(response.content, last_human.content, list(captured_by_id.values()))
 
             # Execute all tool calls in this iteration
@@ -323,6 +357,7 @@ def build_converse_node(tools_by_name: dict):
         # Exceeded max iterations — ask LLM to summarize with what it has
         final_response = await get_llm(settings.formatter_provider, settings.formatter_model).ainvoke(tool_messages)
         logger.info("converse query: max iterations reached, returning best answer")
+        await _enrich_captured_services(captured_by_id, tools_by_name)
         return _query_state_update(final_response.content, last_human.content, list(captured_by_id.values()))
 
     async def converse_node(state: NavigatorState) -> dict:
