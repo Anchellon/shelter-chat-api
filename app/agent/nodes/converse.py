@@ -86,7 +86,7 @@ def _format_results_summary(
         shown = [s for s in raw_services if s.get("service_id") in service_ids][:5]
         for svc in shown:
             name = svc.get("name", "Unknown")
-            org = svc.get("organization_name", "")
+            org = svc.get("org_name", "")
             lines.append(f"  - {name}" + (f" ({org})" if org else ""))
 
     return "\n".join(lines) if lines else "No prior search results."
@@ -173,9 +173,11 @@ async def _enrich_captured_services(captured_by_id: dict, tools_by_name: dict) -
     batch_tool = tools_by_name.get("get_service_details_batch")
     if batch_tool is None:
         return
-    # Skinny search rows lack `address` — that's our marker for "needs enrichment".
-    # Cap matches what _format_query_context actually surfaces to the follow-up LLM.
-    skinny_ids = [sid for sid, svc in captured_by_id.items() if not svc.get("address")]
+    # search_services rows lack `name` — that's our marker for "not yet enriched".
+    # get_service_details_batch is the only source that returns `name`, `org_name`,
+    # `address_1`, `phone`, `long_description`. Cap matches what _format_query_context
+    # actually surfaces to the follow-up LLM.
+    skinny_ids = [sid for sid, svc in captured_by_id.items() if not svc.get("name")]
     if not skinny_ids:
         return
     ids_to_enrich = skinny_ids[:_ENRICH_TOP_N]
@@ -207,15 +209,18 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
     lines.append(f"{len(services)} service(s) returned:")
     for svc in services[:20]:
         name = svc.get("name", "Unknown")
-        org = svc.get("organization_name", "")
-        addr_parts = [p for p in (svc.get("address"), svc.get("city")) if p]
+        org = svc.get("org_name", "")
+        addr_parts = [p for p in (svc.get("address_1"), svc.get("city")) if p]
         location = ", ".join(addr_parts)
         sid = svc.get("service_id")
+        cats = svc.get("category_names") or []
         line = f"- [id={sid}] {name}"
         if org:
             line += f" ({org})"
         if location:
             line += f" — {location}"
+        if cats:
+            line += f" | {', '.join(cats)}"
         lines.append(line)
     return "\n".join(lines)
 
