@@ -319,7 +319,6 @@ def build_converse_node(tools_by_name: dict):
         case_context = state.get("case_context")
         context_str = _context_summary(case_context)
 
-        # Build tool list — search_by_name may not exist yet if MCP hasn't been updated
         query_tools = [
             t for name, t in tools_by_name.items()
             if name in ("search_by_name", "search_services", "get_service_details")
