@@ -195,6 +195,20 @@ async def _enrich_captured_services(captured_by_id: dict, tools_by_name: dict) -
         logger.warning(f"converse query: enrichment failed: {e}")
 
 
+def _ends_with_question(content) -> bool:
+    """Whether the rendered response ends with a question.
+
+    When the converse node offers the navigator a follow-up ("Want details
+    on Pride Place?", "Should I pull up hours?"), a bare 'yes' on the next
+    turn would otherwise classify as `acknowledge` and dead-end the offer.
+    Marking pending_action='follow_up' routes the confirmation back through
+    converse so the LLM can interpret 'yes' against its own prior offer.
+    """
+    if not isinstance(content, str):
+        return False
+    return content.rstrip().endswith("?")
+
+
 def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
     """State update for converse query — always emits the AI message, plus the
     captured services and originating question when the query produced any."""
@@ -203,6 +217,8 @@ def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
         update["last_query"] = query_text
         update["last_query_services"] = services
         logger.info(f"converse query: captured {len(services)} service(s) for follow-up")
+    if _ends_with_question(content):
+        update["pending_action"] = "follow_up"
     return update
 
 
@@ -336,7 +352,10 @@ def build_converse_node(tools_by_name: dict):
         llm = get_llm(settings.formatter_provider, settings.formatter_model)
         response = await llm.ainvoke(prompt_messages)
         logger.info("converse follow_up: answered from state")
-        return {"messages": [AIMessage(content=response.content)]}
+        update: dict = {"messages": [AIMessage(content=response.content)]}
+        if _ends_with_question(response.content):
+            update["pending_action"] = "follow_up"
+        return update
 
     async def _handle_query(state: NavigatorState) -> dict:
         messages = state["messages"]
