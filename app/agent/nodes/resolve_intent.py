@@ -21,18 +21,19 @@ You are an intent classifier for a social services navigator assistant.
 Classify the navigator's message into exactly ONE primary intent:
 
 - new_search: They want to find services for a client (fresh query describing needs)
-- refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on X" all require a new search. **Ordinal references to existing groups ("first group", "second group", "the third group", "the shelter group") always signal refine** — the navigator is modifying, removing, or re-targeting a prior group, not starting over. This holds even if the referenced ordinal doesn't exist (e.g., asking about the "second group" when only one exists) — refine_groups handles that case.
-- follow_up: Can be answered from existing results OR from a prior named-org/topic query (see prior_state) without running a new search. Analysis, comparison, ranking, summarizing what was already found, or asking about locations/services from the prior query ("what locations are available?", "what about the one in the Tenderloin?", "list the addresses").
-- query: They're asking about a specific named org ("what are Glide's hours?", "does Compass accept pets?", "what does the YMCA offer?")
+- refine: A new or narrowed search is needed to answer — even if phrased as a question. Location changes, adding needs, changing eligibility, or asking "do you have info on [service category like shelter/food/jobs] in [location]" all require a new search. **Ordinal references to existing groups ("first group", "second group", "the third group", "the shelter group") always signal refine** — the navigator is modifying, removing, or re-targeting a prior group, not starting over. This holds even if the referenced ordinal doesn't exist (e.g., asking about the "second group" when only one exists) — refine_groups handles that case.
+- follow_up: Can be answered from existing results OR from a prior named-org/topic query (see prior_state) without running a new search. Analysis, comparison, ranking, summarizing what was already found, or asking about locations/services from the prior query ("what locations are available?", "what about the one in the Tenderloin?", "list the addresses", "i want to learn more about the one in X").
+- query: They're asking about a NEW named org not previously discussed ("what are Glide's hours?", "does Compass accept pets?", "what does the YMCA offer?"). If prior_state already has a prior org/topic query for org X, references to anything WITHIN X — a branch, neighborhood, location, ordinal, or attribute — are `follow_up`, NOT `query`.
 - set_context: They're providing or updating client demographics for the case or for a specific group ("my client is a 45yo woman", "new client", "she's also pregnant", "for group 2 the client is a senior", "the family is undocumented"). This includes attributes like age, gender, language, immigration, health, family status — even when scoped to a specific group.
 - help: They want to know what the assistant can do ("what can you do?", "help", "how does this work?")
 - acknowledge: Confirming or reacting without requesting action ("ok", "thanks", "got it", "sounds good", "yes" with no context)
-- clarify: Message is genuinely too ambiguous to classify — use sparingly, only when truly impossible
+- clarify: Message is genuinely too ambiguous to classify — use sparingly, only when truly impossible. **NEVER use clarify if prior_state mentions prior search results or a prior org/topic query** — the message is responding to that context; classify as `follow_up` instead.
 
 Rules:
 - Prefer a concrete intent over "clarify" — only resort to clarify if a reasonable guess is impossible
 - "refine" only applies when there are prior search groups to modify
 - "follow_up" only applies when there are prior search results OR a prior org/topic query to reference
+- When prior_state has a prior org/topic query for org X, any reference to a location, branch, ordinal, or item within X is `follow_up` (not `query`, not `clarify`), regardless of how wordy the phrasing is ("I want to learn more about the one in Chinatown", "can you tell me about the Mission branch", "more details on the SoMa one")
 - If the message combines set_context with a service need ("my client is 45 and needs food"), primary = "set_context", secondary_intent = "new_search", secondary_message = the service need portion
 - Only set secondary_intent when the message clearly contains two distinct actionable intents
 {pending_action_context}
@@ -73,6 +74,12 @@ Message: "the second one"  (after a prior org/topic query — picks an item from
 Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
 
 Message: "more details"  (after a prior org/topic query)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "i want to learn more about the one in Chinatown"  (after a prior org/topic query about a multi-location org — drill-down, NOT a fresh query)
+Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
+
+Message: "can you tell me about the Mission branch?"  (after a prior org/topic query)
 Output: {{"intent": "follow_up", "secondary_intent": null, "secondary_message": null}}
 
 Message: "what about Compass?"  (after a prior org/topic query about YMCA — different org, NOT a follow-up)
@@ -203,6 +210,11 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
     if intent == "follow_up" and not has_results and not has_query_context:
         logger.info("resolve_intent: follow_up with no prior results or query → new_search")
         intent = "new_search"
+    # Drill-down responses to a prior query/results should never hit clarify —
+    # the user has already established intent. Force follow_up instead.
+    if intent == "clarify" and (has_results or has_query_context):
+        logger.info("resolve_intent: clarify with prior state → follow_up")
+        intent = "follow_up"
 
     # When confirming a pending action, carry the triggering message forward so
     # classify_groups (Phase 4) can use it instead of the bare "yes"
