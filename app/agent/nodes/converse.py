@@ -83,7 +83,7 @@ def _format_results_summary(
         if rationale:
             lines.append(f"  Rationale: {rationale}")
         raw_services = results.get(group_id, [])
-        shown = [s for s in raw_services if s.get("id") in service_ids][:5]
+        shown = [s for s in raw_services if s.get("service_id") in service_ids][:5]
         for svc in shown:
             name = svc.get("name", "Unknown")
             org = svc.get("organization_name", "")
@@ -144,7 +144,7 @@ def _merge_service_into(by_id: dict, svc: dict) -> None:
     get_service_details replaces skinny search-hit fields without losing the
     original ordering.
     """
-    sid = svc.get("id")
+    sid = svc.get("service_id")
     if sid is None:
         return
     existing = by_id.get(sid)
@@ -177,7 +177,7 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
         org = svc.get("organization_name", "")
         addr_parts = [p for p in (svc.get("address"), svc.get("city")) if p]
         location = ", ".join(addr_parts)
-        sid = svc.get("id")
+        sid = svc.get("service_id")
         line = f"- [id={sid}] {name}"
         if org:
             line += f" ({org})"
