@@ -47,6 +47,8 @@ Map information to these fields (omit a field entirely if it is not mentioned an
 Also detect if the message implies an obvious next action:
 - If the client clearly needs a specific service (housing, food, shelter, health, jobs, etc.) AND no existing group already covers that need → set pending_action to "new_search"
 - If the client clearly needs a specific service AND an existing group already covers that need (same `what` topic, same `where`) → set pending_action to "refine" so the existing group is updated with the new context instead of being replaced
+- If the message is a context-only update (no explicit service need) AND it changes a field that affects WHO QUALIFIES for services — gender, immigration, family_status, age, employment, health — AND at least one already-searched group's effective context would change as a result → set pending_action to "refine" so the stale search is re-run with the new eligibility profile.
+- Do NOT set pending_action to "refine" for fields that don't affect eligibility filtering (language, ethnicity, financial, housing, other) or for groups marked "not yet searched".
 - Otherwise → set pending_action to null
 
 Return ONLY a JSON object. No explanation. No markdown fences.
@@ -85,7 +87,16 @@ Output: {"action": "clear", "scope": null, "target_group_ids": null, "fields": {
 Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"family_status": "individuals"}, "pending_action": "refine", "confirmation": "Updated — alone, individual. Want me to update the shelter search?"}
 
 (no groups exist) Message: "I need shelter for a single adult male"
-Output: {"action": "update", "scope": "case", "target_group_ids": null, "fields": {"gender": "man", "family_status": "individuals"}, "pending_action": "new_search", "confirmation": "Got it — single adult male. Want me to search for shelter options?"}\
+Output: {"action": "update", "scope": "case", "target_group_ids": null, "fields": {"gender": "man", "family_status": "individuals"}, "pending_action": "new_search", "confirmation": "Got it — single adult male. Want me to search for shelter options?"}
+
+(groups: 1=shelter for immigrant friend in San Francisco | searched) Message: "hes gay also"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"gender": "LGBTQ+"}, "pending_action": "refine", "confirmation": "Adding LGBTQ+ status. Want me to update the shelter search with this?"}
+
+(groups: 1=shelter | searched) Message: "she speaks Spanish only"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"language": "Spanish only"}, "pending_action": null, "confirmation": "Got it — Spanish only."}
+
+(groups: 1=shelter | not yet searched) Message: "shes a senior"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"age": "senior"}, "pending_action": null, "confirmation": "Got it — senior."}\
 """
 
 
@@ -112,14 +123,18 @@ def _build_groups_summary(state: NavigatorState) -> str:
     if not groups:
         return "(no groups yet — context updates apply at case level)"
     case = state.get("case_context")
+    results = state.get("results") or {}
     lines = []
     for g in groups:
         eff = effective_context(case, g.get("client_context"))
         label = g.get("what", "services")
         if g.get("who"):
             label += f" for {g['who']}"
+        # Mark whether this group has produced results yet so the LLM only
+        # proposes refine for groups whose searches are actually stale.
+        searched = "searched" if results.get(str(g["group_id"])) else "not yet searched"
         lines.append(
-            f"- group_id={g['group_id']}: {label} | effective_context: {_summarise_context(eff)}"
+            f"- group_id={g['group_id']}: {label} | effective_context: {_summarise_context(eff)} | {searched}"
         )
     return "\n".join(lines)
 
