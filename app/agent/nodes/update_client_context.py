@@ -45,7 +45,8 @@ Map information to these fields (omit a field entirely if it is not mentioned an
 - other: e.g. "DV survivor", "SF resident", "trauma survivor", "human trafficking survivor"
 
 Also detect if the message implies an obvious next action:
-- If the client clearly needs a specific service (housing, food, shelter, health, jobs, etc.) → set pending_action to "new_search"
+- If the client clearly needs a specific service (housing, food, shelter, health, jobs, etc.) AND no existing group already covers that need → set pending_action to "new_search"
+- If the client clearly needs a specific service AND an existing group already covers that need (same `what` topic, same `where`) → set pending_action to "refine" so the existing group is updated with the new context instead of being replaced
 - Otherwise → set pending_action to null
 
 Return ONLY a JSON object. No explanation. No markdown fences.
@@ -56,8 +57,8 @@ Format:
   "scope": "case" | "groups" | "ambiguous" | null,
   "target_group_ids": [int] | null,
   "fields": { ...only fields that change... },
-  "pending_action": "new_search" | null,
-  "confirmation": "brief 1-2 sentence confirmation. If pending_action is new_search, end with a confirmation question like 'Want me to search for options?'"
+  "pending_action": "new_search" | "refine" | null,
+  "confirmation": "brief 1-2 sentence confirmation. If pending_action is new_search or refine, end with a confirmation question like 'Want me to search for options?' or 'Want me to update the search?'"
 }
 
 Examples:
@@ -78,7 +79,13 @@ Output: {"action": "update", "scope": "ambiguous", "target_group_ids": null, "fi
 Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"age": "senior"}, "pending_action": null, "confirmation": "Updated — client is a senior."}
 
 Message: "New client"
-Output: {"action": "clear", "scope": null, "target_group_ids": null, "fields": {}, "pending_action": null, "confirmation": "Client context cleared. Ready for a new client."}\
+Output: {"action": "clear", "scope": null, "target_group_ids": null, "fields": {}, "pending_action": null, "confirmation": "Client context cleared. Ready for a new client."}
+
+(groups: 1=shelter for immigrant friend in San Francisco) Message: "he is alone and needs shelter"
+Output: {"action": "update", "scope": "groups", "target_group_ids": [1], "fields": {"family_status": "individuals"}, "pending_action": "refine", "confirmation": "Updated — alone, individual. Want me to update the shelter search?"}
+
+(no groups exist) Message: "I need shelter for a single adult male"
+Output: {"action": "update", "scope": "case", "target_group_ids": null, "fields": {"gender": "man", "family_status": "individuals"}, "pending_action": "new_search", "confirmation": "Got it — single adult male. Want me to search for shelter options?"}\
 """
 
 

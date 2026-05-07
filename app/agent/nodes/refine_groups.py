@@ -64,17 +64,26 @@ async def refine_groups_node(state: NavigatorState) -> dict:
     existing_groups = state.get("groups") or []
     messages = state["messages"]
 
-    last_human = next(
-        (m for m in reversed(messages) if isinstance(m, HumanMessage)),
-        None,
-    )
-    if last_human is None:
-        logger.warning("refine_groups: no human message in state")
-        return {}
+    # secondary_message is set by resolve_intent when the user confirms a pending
+    # refine (e.g. "yes" after the bot asked "Want me to update the search?"). The
+    # actual change instruction is in the prior human message, not the bare "yes".
+    secondary_message = state.get("secondary_message")
+    if secondary_message:
+        change_text = secondary_message
+        logger.info("refine_groups: using secondary_message as change instruction")
+    else:
+        last_human = next(
+            (m for m in reversed(messages) if isinstance(m, HumanMessage)),
+            None,
+        )
+        if last_human is None:
+            logger.warning("refine_groups: no human message in state")
+            return {"secondary_message": None}
+        change_text = last_human.content if isinstance(last_human.content, str) else ""
 
     if not existing_groups:
         logger.warning("refine_groups: no existing groups to refine — returning empty")
-        return {"groups": []}
+        return {"groups": [], "secondary_message": None}
 
     case_context = state.get("case_context")
     # Build a per-group view annotated with effective context so the LLM understands
@@ -93,7 +102,7 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         HumanMessage(content=(
             f"Existing groups: {existing_str}\n"
             f"Case context: {context_str}\n"
-            f"Navigator change: {last_human.content}"
+            f"Navigator change: {change_text}"
         )),
     ])
 
@@ -107,7 +116,7 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         groups_data = parsed.get("groups", [])
     except Exception as e:
         logger.error(f"refine_groups parse error: {e} | raw: {raw[:300]}")
-        return {"groups": existing_groups}
+        return {"groups": existing_groups, "secondary_message": None}
 
     # Preserve intake-derived fields on groups whose search params didn't change.
     # This avoids re-running intake/geocoding on groups the navigator didn't touch.
@@ -190,4 +199,5 @@ async def refine_groups_node(state: NavigatorState) -> dict:
         "groups": groups,
         "changed_group_ids": changed_group_ids,
         "removed_group_ids": removed_group_ids,
+        "secondary_message": None,
     }
