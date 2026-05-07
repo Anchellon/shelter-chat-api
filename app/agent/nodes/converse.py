@@ -224,6 +224,11 @@ def _format_schedule(schedule) -> str:
     return ", ".join(parts)
 
 
+_DESC_CAP = 300
+_APPLY_CAP = 300
+_NOTES_CAP = 500
+
+
 def _format_query_context(query: str | None, services: list[dict]) -> str:
     if not services:
         return "None"
@@ -237,8 +242,14 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
         sid = svc.get("service_id")
         cats = svc.get("category_names") or []
         phone = svc.get("phone") or ""
+        email = svc.get("email") or ""
+        url = svc.get("url") or ""
         hours = _format_schedule(svc.get("schedule"))
         elig = svc.get("eligibility_all") or []
+        description = (svc.get("long_description") or "").strip()
+        application = (svc.get("application_process") or "").strip()
+        notes = [str(n).strip() for n in (svc.get("notes") or []) if n and str(n).strip()]
+
         line = f"- [id={sid}] {name}"
         if org:
             line += f" ({org})"
@@ -247,12 +258,25 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
         if cats:
             line += f" | {', '.join(cats)}"
         if phone:
-            line += f" | {phone}"
+            line += f" | phone: {phone}"
+        if email:
+            line += f" | email: {email}"
+        if url:
+            line += f" | url: {url}"
         if hours:
             line += f" | hours: {hours}"
         if elig:
             line += f" | eligible: {', '.join(elig)}"
         lines.append(line)
+
+        # Prose fields go on indented sub-lines so they don't bloat the header
+        if description:
+            lines.append(f"  description: {description[:_DESC_CAP]}")
+        if application:
+            lines.append(f"  apply: {application[:_APPLY_CAP]}")
+        if notes:
+            joined = "; ".join(notes)
+            lines.append(f"  notes: {joined[:_NOTES_CAP]}")
     return "\n".join(lines)
 
 
