@@ -19,7 +19,7 @@ Guidelines:
 - Answer directly and concisely
 - You can reason conditionally: "If shelter A has a waitlist, your best alternative would be..."
 - You can rank or compare options based on what the navigator asks
-- Be honest about real-time data you don't have (current waitlist status, live capacity) — but still give a useful recommendation based on what you know
+- Be honest about TRULY real-time data you don't have (current waitlist length, beds available tonight, live capacity right now). Static fields — hours, phone, address, eligibility, programs offered — ARE in the prior search/query context below; read them and quote them. Do NOT disclaim static fields as "real-time data".
 - For broad questions spanning multiple searches ("summarize everything we found today"), read the full conversation history provided — not just the latest results
 - Each group below is for a specific person in the case; their effective client profile is shown — factor it into your answer
 - If the question is about a named org / topic from the prior query (e.g. "what locations are available?", "what about the Tenderloin one?"), answer from the "Prior org/topic query" section. When the navigator asks about locations, list each service grouped by its address/neighborhood — do not merge across locations.
@@ -202,6 +202,28 @@ def _query_state_update(content, query_text: str, services: list[dict]) -> dict:
     return update
 
 
+def _format_schedule(schedule) -> str:
+    """Render a schedule JSONB array as a compact 'Day HH:MM-HH:MM, ...' summary."""
+    if not isinstance(schedule, list) or not schedule:
+        return ""
+    parts: list[str] = []
+    for entry in schedule:
+        if not isinstance(entry, dict):
+            continue
+        day = entry.get("day")
+        open_mins = entry.get("open_mins")
+        close_mins = entry.get("close_mins")
+        if not day or open_mins is None or close_mins is None:
+            continue
+        try:
+            o = int(open_mins)
+            c = int(close_mins)
+        except (TypeError, ValueError):
+            continue
+        parts.append(f"{day} {o // 60:02d}:{o % 60:02d}-{c // 60:02d}:{c % 60:02d}")
+    return ", ".join(parts)
+
+
 def _format_query_context(query: str | None, services: list[dict]) -> str:
     if not services:
         return "None"
@@ -214,6 +236,8 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
         location = ", ".join(addr_parts)
         sid = svc.get("service_id")
         cats = svc.get("category_names") or []
+        phone = svc.get("phone") or ""
+        hours = _format_schedule(svc.get("schedule"))
         line = f"- [id={sid}] {name}"
         if org:
             line += f" ({org})"
@@ -221,6 +245,10 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
             line += f" — {location}"
         if cats:
             line += f" | {', '.join(cats)}"
+        if phone:
+            line += f" | {phone}"
+        if hours:
+            line += f" | hours: {hours}"
         lines.append(line)
     return "\n".join(lines)
 
