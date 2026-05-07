@@ -1,12 +1,11 @@
 models:
   - type: main
-    engine: ollama
-    model: "llama3.2"
-    parameters:
-      base_url: "http://172.26.64.1:11434"
+    engine: anthropic
+    model: claude-haiku-4-5-20251001
 
 rails:
   input:
     flows:
       - check input safety
       - check input scope
+      - check input advice

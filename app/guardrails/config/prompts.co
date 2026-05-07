@@ -29,3 +29,21 @@ define flow check input scope
   user ask off topic question
   bot refuse off topic question
   stop
+
+define user ask for general advice
+  "give me advice on improving mental health support"
+  "what's a best practice for working with homeless clients"
+  "how should I run my outreach program"
+  "what do you think about trauma-informed care"
+  "any tips for case management"
+  "how can I do my job better"
+  "what would you recommend for engaging hard to reach clients"
+  "share your opinion on harm reduction"
+
+define bot refuse general advice
+  "I can only surface what's in the SF Service Guide directory — I'm not the right tool for general professional advice or opinions on practice. If you want, tell me about a specific client need and I'll search for services that might fit."
+
+define flow check input advice
+  user ask for general advice
+  bot refuse general advice
+  stop
