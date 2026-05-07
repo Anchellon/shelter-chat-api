@@ -130,6 +130,14 @@ The assistant previously asked the navigator a follow-up question (pending_actio
 - Otherwise classify the message normally and ignore the pending context.
 """
 
+_PENDING_CLARIFY_CONTEXT = """
+The assistant previously asked the navigator a clarifying question (search-for-a-client vs general-info).
+The navigator's current message is the answer. Classify it as a CONCRETE intent — `new_search`, `query`, `follow_up`, `set_context`, `acknowledge`, or `help`. NEVER return `clarify` again.
+- If the answer indicates they want services found for someone (e.g. "specific services", "find services", "for my client", "for my friend", "support services") → `new_search`.
+- If the answer asks about a specific named org → `query`.
+- Otherwise prefer `new_search` over any other guess.
+"""
+
 
 def _find_previous_human_content(messages: list) -> str | None:
     human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
@@ -168,10 +176,12 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
         )
     prior_state = "; ".join(state_parts) if state_parts else "no prior search"
 
-    pending_block = (
-        _PENDING_ACTION_CONTEXT.format(pending_action=pending_action)
-        if pending_action else ""
-    )
+    if pending_action == "clarify":
+        pending_block = _PENDING_CLARIFY_CONTEXT
+    elif pending_action:
+        pending_block = _PENDING_ACTION_CONTEXT.format(pending_action=pending_action)
+    else:
+        pending_block = ""
 
     system = _SYSTEM_PROMPT.format(
         pending_action_context=pending_block,
@@ -215,6 +225,11 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
     if intent == "clarify" and (has_results or has_query_context):
         logger.info("resolve_intent: clarify with prior state → follow_up")
         intent = "follow_up"
+    # If we just asked a clarifying question, the navigator's answer must resolve
+    # to a concrete intent — never re-ask. Default to new_search.
+    if intent == "clarify" and pending_action == "clarify":
+        logger.info("resolve_intent: clarify after pending_action=clarify → new_search")
+        intent = "new_search"
 
     # When confirming a pending action, carry the triggering message forward so
     # classify_groups (Phase 4) can use it instead of the bare "yes"

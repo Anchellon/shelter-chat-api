@@ -40,4 +40,4 @@ async def clarify_node(state: NavigatorState) -> dict:
     ])
 
     logger.info("clarify_node: asking clarifying question")
-    return {"messages": [AIMessage(content=response.content)]}
+    return {"messages": [AIMessage(content=response.content)], "pending_action": "clarify"}
