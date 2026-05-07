@@ -25,6 +25,19 @@ Rules:
 - Set "when" to null if no time or day is mentioned. Extract it if the user says things like "tonight", "Saturday morning", "after 6pm", "on weekdays", etc.
 - Set "open_now" to true ONLY if the user explicitly wants open services right now — phrases like "open now", "currently open", "open today", "what's open". Set to false otherwise, even if "when" is mentioned.
 - group_id starts at 1 and increments per group.
+- ALSO extract structured demographics for the person each group is searching for, into a `client_context` object on that group. This makes facts visible to downstream nodes (refine, format, follow-up) instead of leaving them buried in `who` text.
+  - Fields (omit any that aren't implied by the message): age, housing, gender, family_status, employment, financial, health, ethnicity, immigration, language, other.
+  - Example phrases → fields:
+    - "immigrant", "undocumented", "asylum seeker", "DACA", "recent immigrant" → immigration
+    - "Spanish only", "Cantonese", "limited English" → language
+    - "teen", "teenager", "senior", "child", "45yo" → age
+    - "woman", "man", "LGBTQ+", "non-binary" → gender
+    - "single mom", "pregnant", "family of 4", "alone", "individual" → family_status
+    - "veteran", "unemployed" → employment
+    - "low-income", "uninsured", "on SSI" → financial
+    - "substance dependency", "HIV positive", "mental health concerns" → health
+    - "DV survivor", "trauma survivor", "human trafficking survivor" → other
+  - If no demographic facts are stated, set `client_context` to null.
 - If the message is NOT a request to find social services (shelter, food, health, jobs, substance use treatment, legal aid, housing, mental health, etc.), return {"groups": []}. Examples of non-service queries: weather, news, general advice, disaster preparedness, emergency response, cooking, sports, coding.
 
 Return ONLY a JSON object with a "groups" key. No explanation. No markdown fences.
@@ -32,22 +45,28 @@ Return ONLY a JSON object with a "groups" key. No explanation. No markdown fence
 Examples:
 
 User: "I need shelter and food for an adult on eddy street"
-Output: {"groups": [{"group_id": 1, "what": "shelter and food", "who": "adult", "where": "Eddy Street, San Francisco", "when": null, "open_now": false}]}
+Output: {"groups": [{"group_id": 1, "what": "shelter and food", "who": "adult", "where": "Eddy Street, San Francisco", "when": null, "open_now": false, "client_context": {"age": "adult"}}]}
 
 User: "I have a group of lgbtq teens who need food and shelter"
-Output: {"groups": [{"group_id": 1, "what": "food and shelter", "who": "lgbtq teens", "where": "San Francisco", "when": null, "open_now": false}]}
+Output: {"groups": [{"group_id": 1, "what": "food and shelter", "who": "lgbtq teens", "where": "San Francisco", "when": null, "open_now": false, "client_context": {"age": "teenager", "gender": "LGBTQ+"}}]}
 
 User: "I need shelter for seniors and food for my kids on Saturday morning"
-Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "seniors", "where": "San Francisco", "when": "Saturday morning", "open_now": false}, {"group_id": 2, "what": "food", "who": "kids", "where": "San Francisco", "when": "Saturday morning", "open_now": false}]}
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "seniors", "where": "San Francisco", "when": "Saturday morning", "open_now": false, "client_context": {"age": "senior"}}, {"group_id": 2, "what": "food", "who": "kids", "where": "San Francisco", "when": "Saturday morning", "open_now": false, "client_context": {"age": "child"}}]}
 
 User: "What shelters are open now in the Tenderloin?"
-Output: {"groups": [{"group_id": 1, "what": "shelter", "who": null, "where": "Tenderloin, San Francisco", "when": null, "open_now": true}]}
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": null, "where": "Tenderloin, San Francisco", "when": null, "open_now": true, "client_context": null}]}
 
 User: "I can offer free meals to anyone who needs them"
 Output: {"groups": []}
 
 User: "Looking for drug rehab in the Tenderloin"
-Output: {"groups": [{"group_id": 1, "what": "drug rehab", "who": null, "where": "Tenderloin, San Francisco", "when": null, "open_now": false}]}"""
+Output: {"groups": [{"group_id": 1, "what": "drug rehab", "who": null, "where": "Tenderloin, San Francisco", "when": null, "open_now": false, "client_context": {"health": "substance dependency"}}]}
+
+User: "i want to find a shelter for my immigrant friend"
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "immigrant friend", "where": "San Francisco", "when": null, "open_now": false, "client_context": {"immigration": "immigrant"}}]}
+
+User: "shelter for an undocumented Spanish-speaking single mom in the Mission"
+Output: {"groups": [{"group_id": 1, "what": "shelter", "who": "undocumented Spanish-speaking single mom", "where": "Mission, San Francisco", "when": null, "open_now": false, "client_context": {"gender": "woman", "family_status": "single mom", "immigration": "undocumented", "language": "Spanish only"}}]}"""
 
 
 def _context_summary(context: ClientContext | None) -> str:
@@ -81,6 +100,14 @@ def _parse_groups(raw: str) -> list[Group]:
 
     groups: list[Group] = []
     for i, item in enumerate(data, start=1):
+        raw_ctx = item.get("client_context")
+        client_context: ClientContext | None
+        if isinstance(raw_ctx, dict):
+            cleaned = {k: v for k, v in raw_ctx.items() if v not in (None, "")}
+            client_context = cleaned or None  # type: ignore[assignment]
+        else:
+            client_context = None
+
         groups.append(Group(
             group_id=int(item.get("group_id", i)),
             what=str(item.get("what", "")),
@@ -93,8 +120,10 @@ def _parse_groups(raw: str) -> list[Group]:
             eligibilities=[],
             lat=None,
             lng=None,
-            # Per-person overrides — start empty; effective context falls back to case_context
-            client_context=None,
+            # Demographics extracted from the original query — surfaces facts like
+            # "immigrant" / "Spanish-speaking" / "senior" so refine/format/follow-up
+            # nodes can read them from effective_context instead of re-parsing `who`.
+            client_context=client_context,
         ))
     return [g for g in groups if g["what"]]
 
