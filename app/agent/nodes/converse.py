@@ -238,6 +238,7 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
         cats = svc.get("category_names") or []
         phone = svc.get("phone") or ""
         hours = _format_schedule(svc.get("schedule"))
+        elig = svc.get("eligibility_all") or []
         line = f"- [id={sid}] {name}"
         if org:
             line += f" ({org})"
@@ -249,6 +250,8 @@ def _format_query_context(query: str | None, services: list[dict]) -> str:
             line += f" | {phone}"
         if hours:
             line += f" | hours: {hours}"
+        if elig:
+            line += f" | eligible: {', '.join(elig)}"
         lines.append(line)
     return "\n".join(lines)
 
