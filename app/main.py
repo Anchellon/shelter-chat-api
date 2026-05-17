@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,12 +17,6 @@ from app.api.saved_services import router as saved_services_router
 
 configure_logging()
 logger = logging.getLogger(__name__)
-
-# Configure LangSmith tracing if enabled
-if settings.langchain_tracing_v2:
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
-    os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
 
 # Global references set during lifespan startup — accessed by chat.py and services.py
 mcp_client: MCPClient | None = None

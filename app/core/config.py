@@ -52,10 +52,5 @@ class Settings(BaseSettings):
     auth0_domain: str = ""
     auth0_audience: str = ""
 
-    # LangSmith observability (optional)
-    langchain_tracing_v2: bool = False
-    langchain_api_key: str = ""
-    langchain_project: str = "shelter-chat"
-
 
 settings = Settings()
