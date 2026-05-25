@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"\\(Get-ChildItem -Path 'src' -Recurse -Filter '*.py' | Measure-Object -Line\\).Lines + \\(Get-ChildItem -Path 'sql' -Recurse -Filter '*.sql' | Measure-Object -Line\\).Lines\")"
+    ]
+  }
+}
