@@ -8,6 +8,8 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from langfuse.callback import CallbackHandler
+
 from app.agent.runner import stream_resume
 from app.api.chat import with_heartbeat
 from app.core.auth import require_user
@@ -111,6 +113,7 @@ async def resume(
     config = {
         "configurable": {"thread_id": request.conversation_id},
         "metadata": {"user_id": user_id},
+        "callbacks": [CallbackHandler(session_id=request.conversation_id, user_id=user_id)],
     }
 
     return StreamingResponse(

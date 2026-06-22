@@ -8,6 +8,8 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
+from langfuse.callback import CallbackHandler
+
 from app.agent.runner import stream_agent
 from app.core.auth import require_user
 from app.core.db import create_referral, save_conversation_summary
@@ -187,6 +189,7 @@ async def chat(
     config = {
         "configurable": {"thread_id": conversation_id},
         "metadata": {"user_id": user_id},
+        "callbacks": [CallbackHandler(session_id=conversation_id, user_id=user_id)],
     }
 
     return StreamingResponse(
