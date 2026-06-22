@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 
 from app.agent.runner import stream_resume
 from app.api.chat import with_heartbeat

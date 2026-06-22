@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 
 from app.agent.runner import stream_agent
 from app.core.auth import require_user
