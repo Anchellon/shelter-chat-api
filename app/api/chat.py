@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
+from langfuse import propagate_attributes
 from langfuse.langchain import CallbackHandler
 
 from app.agent.runner import stream_agent
@@ -77,83 +78,87 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
 
     try:
-        async for event in with_heartbeat(stream_agent(question, conversation_id, current_time, graph, config)):
-            if event["type"] == "_heartbeat":
-                yield ": keepalive\n\n"
-                continue
+        async with propagate_attributes(
+            session_id=conversation_id,
+            user_id=config["metadata"]["user_id"],
+        ):
+            async for event in with_heartbeat(stream_agent(question, conversation_id, current_time, graph, config)):
+                if event["type"] == "_heartbeat":
+                    yield ": keepalive\n\n"
+                    continue
 
-            if event["type"] == "text":
-                chunk_count += 1
-                yield f"data: {json.dumps({'type': 'text-delta', 'id': msg_id, 'delta': event['content']})}\n\n"
+                if event["type"] == "text":
+                    chunk_count += 1
+                    yield f"data: {json.dumps({'type': 'text-delta', 'id': msg_id, 'delta': event['content']})}\n\n"
 
-            elif event["type"] == "tool_start":
-                # Visible status indicator — frontend renders this between text chunks
-                yield f"data: {json.dumps({'type': 'tool-start', 'tool': event['tool'], 'status': event['status']})}\n\n"
+                elif event["type"] == "tool_start":
+                    # Visible status indicator — frontend renders this between text chunks
+                    yield f"data: {json.dumps({'type': 'tool-start', 'tool': event['tool'], 'status': event['status']})}\n\n"
 
-            elif event["type"] == "tool_end":
-                yield f"data: {json.dumps({'type': 'tool-end', 'tool': event['tool']})}\n\n"
+                elif event["type"] == "tool_end":
+                    yield f"data: {json.dumps({'type': 'tool-end', 'tool': event['tool']})}\n\n"
 
-            elif event["type"] == "groups_identified":
-                yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
+                elif event["type"] == "groups_identified":
+                    yield f"data: {json.dumps({'type': 'groups_identified', 'groups': event['groups']})}\n\n"
 
-            elif event["type"] == "format_complete":
-                formatted = event["formatted"]
-                groups = event.get("groups", [])
-                changed_group_ids = event.get("changed_group_ids", [])
-                removed_group_ids = event.get("removed_group_ids", [])
-                referral_id = await create_referral(
-                    thread_id=conversation_id,
-                    user_id=config["metadata"]["user_id"],
-                    groups=groups,
-                    formatted=formatted,
-                    changed_group_ids=changed_group_ids,
-                    removed_group_ids=removed_group_ids,
-                )
-                # Inject a synthetic marker into the LangGraph checkpoint so that
-                # GET /conversations/{id} can reconstruct the exact message order
-                # without positional heuristics.
-                await graph.aupdate_state(
-                    config,
-                    {"messages": [AIMessage(
-                        content="",
-                        id=f"referral_{referral_id}",
-                        additional_kwargs={"type": "referral", "referral_id": referral_id},
-                    )]},
-                )
-                yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'changed_group_ids': changed_group_ids, 'removed_group_ids': removed_group_ids, 'referral_id': referral_id})}\n\n"
+                elif event["type"] == "format_complete":
+                    formatted = event["formatted"]
+                    groups = event.get("groups", [])
+                    changed_group_ids = event.get("changed_group_ids", [])
+                    removed_group_ids = event.get("removed_group_ids", [])
+                    referral_id = await create_referral(
+                        thread_id=conversation_id,
+                        user_id=config["metadata"]["user_id"],
+                        groups=groups,
+                        formatted=formatted,
+                        changed_group_ids=changed_group_ids,
+                        removed_group_ids=removed_group_ids,
+                    )
+                    # Inject a synthetic marker into the LangGraph checkpoint so that
+                    # GET /conversations/{id} can reconstruct the exact message order
+                    # without positional heuristics.
+                    await graph.aupdate_state(
+                        config,
+                        {"messages": [AIMessage(
+                            content="",
+                            id=f"referral_{referral_id}",
+                            additional_kwargs={"type": "referral", "referral_id": referral_id},
+                        )]},
+                    )
+                    yield f"data: {json.dumps({'type': 'format_complete', 'formatted': formatted, 'groups': groups, 'changed_group_ids': changed_group_ids, 'removed_group_ids': removed_group_ids, 'referral_id': referral_id})}\n\n"
 
-            elif event["type"] == "context_updated":
-                payload = {"type": "context_updated"}
-                if "case_context" in event:
-                    payload["case_context"] = event["case_context"]
-                if "groups" in event:
-                    payload["groups"] = event["groups"]
-                yield f"data: {json.dumps(payload)}\n\n"
+                elif event["type"] == "context_updated":
+                    payload = {"type": "context_updated"}
+                    if "case_context" in event:
+                        payload["case_context"] = event["case_context"]
+                    if "groups" in event:
+                        payload["groups"] = event["groups"]
+                    yield f"data: {json.dumps(payload)}\n\n"
 
-            elif event["type"] == "clarify_request":
-                yield f"data: {json.dumps(event)}\n\n"
+                elif event["type"] == "clarify_request":
+                    yield f"data: {json.dumps(event)}\n\n"
 
-            elif event["type"] == "context_clarify_request":
-                yield f"data: {json.dumps(event)}\n\n"
-                await save_conversation_summary(
-                    thread_id=conversation_id,
-                    user_id=config["metadata"]["user_id"],
-                    title=question,
-                )
-                return  # stream ends here — frontend resumes via POST /chat/resume
+                elif event["type"] == "context_clarify_request":
+                    yield f"data: {json.dumps(event)}\n\n"
+                    await save_conversation_summary(
+                        thread_id=conversation_id,
+                        user_id=config["metadata"]["user_id"],
+                        title=question,
+                    )
+                    return  # stream ends here — frontend resumes via POST /chat/resume
 
-            elif event["type"] == "intake_request":
-                yield f"data: {json.dumps(event)}\n\n"
-                await save_conversation_summary(
-                    thread_id=conversation_id,
-                    user_id=config["metadata"]["user_id"],
-                    title=question,
-                )
-                return  # stream ends here — frontend resumes via POST /chat/resume
+                elif event["type"] == "intake_request":
+                    yield f"data: {json.dumps(event)}\n\n"
+                    await save_conversation_summary(
+                        thread_id=conversation_id,
+                        user_id=config["metadata"]["user_id"],
+                        title=question,
+                    )
+                    return  # stream ends here — frontend resumes via POST /chat/resume
 
-            elif event["type"] == "error":
-                yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
-                return
+                elif event["type"] == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
+                    return
 
     except Exception as e:
         logger.error(f"Stream error (conv={conversation_id}): {e}", exc_info=True)
@@ -189,7 +194,7 @@ async def chat(
     config = {
         "configurable": {"thread_id": conversation_id},
         "metadata": {"user_id": user_id},
-        "callbacks": [CallbackHandler(session_id=conversation_id, user_id=user_id)],
+        "callbacks": [CallbackHandler()],
     }
 
     return StreamingResponse(
