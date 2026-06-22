@@ -34,7 +34,7 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
     has_text = False
 
     try:
-        async with propagate_attributes(
+        with propagate_attributes(
             session_id=request.conversation_id,
             user_id=config["metadata"]["user_id"],
         ):

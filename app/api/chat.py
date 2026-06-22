@@ -78,7 +78,7 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
 
     try:
-        async with propagate_attributes(
+        with propagate_attributes(
             session_id=conversation_id,
             user_id=config["metadata"]["user_id"],
         ):
