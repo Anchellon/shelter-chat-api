@@ -1,6 +1,6 @@
 # Navigator — Project Context for Cover Letter Drafting
 
-> **Purpose of this document.** Self-contained technical briefing covering all five repositories that make up the Navigator platform. Designed to be loaded into a fresh Claude project as the sole context needed to write technical cover letters about this work. Every claim here is grounded in the actual code as of 2026-05-18.
+> **Purpose of this document.** Self-contained technical briefing covering all five repositories that make up the Navigator platform. Designed to be loaded into a fresh Claude project as the sole context needed to write technical cover letters about this work. Every claim here is grounded in the actual code as of 2026-06-22.
 
 ---
 
@@ -62,16 +62,16 @@ All inter-service discovery uses **AWS Cloud Map** private DNS (`*.navigator-sta
 
 **Stack**: Python 3.12, FastAPI 0.115, LangGraph 0.2 with `AsyncPostgresSaver` checkpointer, LangChain MCP adapters, NeMo Guardrails 0.10, raw `psycopg` async (no ORM), Auth0 RS256 JWT via `python-jose`, Flyway migrations (8 versioned files), Langfuse + OpenTelemetry.
 
-**Agent graph** (12 nodes, compiled at FastAPI startup):
+**Agent graph** (13 nodes, compiled at FastAPI startup):
 - `guardrails` — Claude-Haiku-gated NeMo safety/scope/advice filter; **fails open** on 30s timeout to protect UX.
 - `resolve_intent` — classifies into 8 intents: `new_search`, `refine`, `follow_up`, `query`, `set_context`, `help`, `acknowledge`, `clarify`. Ordinal references like *"the second group"* are routed to `refine`, not a new search.
 - `classify_groups` / `refine_groups` — extract structured `Group` records (what / who / where / when) plus a `client_context` block of structured demographics (age, housing, gender, family_status, employment, financial, health, ethnicity, immigration, language). Refine preserves categories/eligibilities/lat/lng on unchanged groups so we don't re-LLM-map and re-geocode; emits `changed_group_ids` + `removed_group_ids` for frontend diff affordances.
 - `geo_check` — geocodes per-group `where`, drops groups outside the SF bounding box (37.63–37.84 lat, –122.52 to –122.35 lng).
-- `intake` — LLM-maps `what` → MCP categories, `who` → MCP eligibilities. If gaps remain, calls `langgraph.types.interrupt({"group_id", "group_label", "steps": […]})`; stream pauses, frontend gets an `intake_request` SSE event, navigator answers, `/chat/resume` calls `graph.invoke(Command(resume=…))`.
+- `intake` — LLM-maps `what` → MCP categories, `who` → MCP eligibilities. If gaps remain, calls `langgraph.types.interrupt({"group_id", "group_label", "steps": […]})`; stream pauses, frontend gets an `intake_request` SSE event, navigator answers, `POST /api/v1/resume` calls `graph.invoke(Command(resume=…))`.
 - `search_per_group` — one MCP `search_services` call per group, then `get_service_details_batch` enriches the top 5.
 - `format_results` — generates 1-2-sentence rationales; emits `formatted: dict[group_id → {rationale, service_ids}]`.
 - `converse` — out-of-graph queries; capped at 3 tool iterations; follow-ups answer from cached `last_query_services` without re-fetching.
-- `update_client_context`, `help_node`, `acknowledge_node`, `clarify_node` — meta-responses; `update_client_context` can chain another intent via an `intent_queue`.
+- `update_client_context`, `help_node`, `acknowledge_node`, `clarify_node` — meta-responses; `update_client_context` can also HITL-interrupt when scope is ambiguous (emits `context_clarify_request`, resumes via `POST /api/v1/resume`), and can chain another intent via `intent_queue` when context changes affect eligibility.
 
 **Engineering choices worth surfacing**:
 - **AsyncPostgresSaver** for conversation state (multi-process resume by `thread_id`, no in-memory drift).
@@ -80,7 +80,7 @@ All inter-service discovery uses **AWS Cloud Map** private DNS (`*.navigator-sta
 - **Synthetic `AIMessage` referral marker** (`id=f"referral_{uuid}"`) is `aupdate_state`-injected into the checkpoint so `GET /conversations/{id}` can reconstruct exact turn order without positional heuristics.
 - Auth0 dev-mode bypass — if `auth0_domain` is unset, `require_user` returns `"dev"`. Lets local development work without an Auth0 tenant.
 
-**API surface**: `POST /chat`, `POST /chat/resume`, `GET /conversations[/:id]`, `POST /services/batch`, full referral CRUD (`POST/PATCH/GET/DELETE /referrals`), `/health`.
+**API surface**: `POST /chat`, `POST /api/v1/resume` (HITL resume), `GET /conversations[/:id]`, `POST /services/batch`, full referral CRUD (`POST/PATCH/GET/DELETE /referrals`), saved-services bookmarks (`POST/DELETE/GET /saved-services`), `/health`.
 
 **Deployment**: Dockerfile (python:3.12-slim + g++ for psycopg), GitHub Actions OIDC into AWS, ECR push, `ecs:UpdateService` rollout.
 
@@ -139,7 +139,7 @@ This is a **semantic indexing pipeline**, not an upstream data scraper — it co
 **Custom SSE consumer** (`src/services/api.ts`):
 - Spec-correct: events split on `\n\n`, multi-line `data:` concatenated with `\n`.
 - `ReadableStream.getReader()` + `TextDecoder` driven by an `async function* parseSSE()` — events yield as they arrive.
-- Handles every event type emitted by the backend: `text-start` / `text-delta` / `text-end`, `tool-start` / `tool-end`, `groups_identified`, `format_complete`, `intake_request`, `context_updated`, `clarify_request`, `finish`, `error`.
+- Handles every event type emitted by the backend: `text-start` / `text-delta` / `text-end`, `tool-start` / `tool-end`, `groups_identified`, `format_complete`, `intake_request`, `context_clarify_request`, `context_updated`, `clarify_request`, `finish`, `error`.
 
 **Stream-buffering pattern**: incoming text deltas accumulate in `pendingText` Redux state and **are not rendered as a finalized message** until `format_complete`, `clarify_request`, or `finish` arrives. Eliminates flicker during multi-step agent reasoning while still showing live typing.
 
@@ -187,7 +187,7 @@ This is a **semantic indexing pipeline**, not an upstream data scraper — it co
 | Layer | Tech |
 |------|------|
 | Frontend | React 19, TypeScript 5.9, Vite, Tailwind v3, Redux Toolkit, React Router v7, Auth0 SDK, Zod |
-| Streaming protocol | Server-Sent Events with custom typed event vocabulary (12+ event types) |
+| Streaming protocol | Server-Sent Events with custom typed event vocabulary (13 event types) |
 | API | FastAPI 0.115, Uvicorn, Pydantic Settings, Auth0 RS256 JWT |
 | Agent runtime | LangGraph 0.2 with AsyncPostgresSaver, LangChain MCP adapters, NeMo Guardrails 0.10 |
 | LLM providers | Anthropic (Claude Haiku 4.5 default for classifier/intake/formatter), Ollama (Qwen 2.5-7b local), OpenAI (factory-pluggable) |
@@ -231,7 +231,7 @@ These are the items most worth pulling into a cover letter because they show jud
 - **~10,000 LOC** of application code (Python + TypeScript) plus **~800 LOC** of SQL plus **~1,200 files** of CDK/CloudFormation.
 - **6 CloudFormation stacks** synthesized from ~9 Python CDK files.
 - **8 Flyway migrations** on the chat-api side, **2 DDL files** on the ingestion side.
-- **12 LangGraph nodes** in the agent, **7 MCP tools** in the search server, **12 SSE event types** in the streaming contract.
+- **13 LangGraph nodes** in the agent, **7 MCP tools** in the search server, **13 SSE event types** in the streaming contract.
 - **1024-dim** embeddings indexed via HNSW with cosine distance, capped at 50 results per query.
 - Live in **AWS us-east-1**, single environment, real navigator traffic.
 
@@ -261,3 +261,153 @@ To save the cover-letter Claude from over-claiming:
 | `shelter-infra` | `c:\Anshul\code\projects\shelter-infra` |
 
 GitHub org: `Anchellon`. AWS account: `746669221991`, region `us-east-1`, deployed environment: `Navigator-Staging`.
+
+---
+
+## 10. Interview prep — request lifecycle
+
+> "Walk me through what happens when a navigator sends a message."
+
+### Happy path: new search, no interrupts
+
+1. **Navigator types** a message ("need shelter for an LGBTQ teen on Saturday morning") and hits send.
+2. **React SPA** (`api.ts`) opens a `POST /api/v1/chat` SSE connection with a Bearer token (Auth0 access token from `getAccessTokenSilently`). Redux sets `isStreaming: true`.
+3. **FastAPI** validates the JWT via `require_user` (RS256, JWKS cached in memory). Derives `thread_id` from `conversation_id` (UUID from prior turn) or generates a new one.
+4. **`astream_events()`** starts on the compiled LangGraph graph with the new `HumanMessage` appended to state.
+5. **`guardrails` node** — sends the message to NeMo Guardrails (Claude Haiku). If it passes scope/safety checks, the original message flows through unchanged. 30s timeout; on timeout or exception it **fails open** and passes the message anyway.
+6. **`resolve_intent` node** — LLM classifies the message into one of 8 intents. This message → `new_search`.
+7. **`classify_groups` node** — LLM extracts structured `Group` records: `{what: "shelter", who: "LGBTQ teen", where: "San Francisco", when: "Saturday morning", open_now: false}` plus a `client_context` block capturing demographics (age, housing, gender, etc.). SSE event `groups_identified` fires; **frontend renders group chips in the chat pane**.
+8. **`geo_check` node** — calls MCP `geocode_location` for each group's `where`. "San Francisco" resolves to a lat/lng inside the SF bounding box → group kept.
+9. **`intake` node** — calls MCP `list_categories` and `list_eligibilities`. LLM maps `what: "shelter"` → `["sfsg-shelter"]`, `who: "LGBTQ teen"` → `["Youth (below 21 years old)", "LGBTQ+"]`. No gaps → no interrupt. Groups now have `categories` and `eligibilities` populated.
+10. **`search_per_group` node** — calls MCP `search_services({query: "shelter LGBTQ teen", categories: ["sfsg-shelter"], eligibilities: [...], lat: 37.77, lng: -122.42, when: "Saturday morning"})`. MCP runs cosine similarity against pgvector, applies tag nudges and schedule filter, returns up to 50 results. Then calls `get_service_details_batch` on the top 5 to backfill address/phone/org name.
+11. **`format_results` node** — LLM reads the top services' embedding text and writes a 1–2 sentence rationale per group explaining why these services match. Emits `formatted: {"1": {rationale: "...", service_ids: [123, 456]}}`.
+12. **`format_complete` SSE event** fires — frontend renders the ResultsPane with service cards. Backend creates a `referrals` row in Postgres and injects a synthetic `AIMessage` checkpoint marker (`id=f"referral_{uuid}"`) via `aupdate_state` so conversation reload reconstructs the exact turn.
+13. **`finish` SSE event** — frontend sets `isStreaming: false`.
+
+### With an intake interrupt
+
+After step 9, if the LLM can't confidently map a category or eligibility (e.g., "need help" with no specifics), `intake` calls `langgraph.types.interrupt({group_id, group_label, steps: [...]})`. The stream **returns early** with an `intake_request` SSE event. The frontend renders a multi-step intake wizard. Navigator selects answers → `POST /api/v1/resume` with `{conversation_id, action: "submit", answers: {...}}` → graph resumes from the interrupt point and continues to `search_per_group`.
+
+---
+
+## 11. Interview prep — failure handling
+
+| What breaks | What happens | Handled where |
+|-------------|-------------|---------------|
+| Guardrails timeout (>30s) | **Fails open** — message passes through unchanged | `guardrails/node.py` try/except with timeout |
+| Guardrails blocks input | Returns refusal `AIMessage`, graph ends, `finish` event fires | NeMo policy in `config/prompts.co` |
+| All groups outside SF bounding box | `geo_check` drops them all, emits an `AIMessage` explaining the constraint, graph ends cleanly | `geo_check.py` checks remaining groups count |
+| MCP server unreachable | Tool calls raise; exception propagates to `runner.py`; `error` SSE event fires with `errorText`, stream aborts | `runner.py` error handling |
+| Navigator cancels intake interrupt | `POST /api/v1/resume` with `action: "cancel"` → `Command(resume=None)` → graph ends gracefully | `resume.py` + LangGraph resume logic |
+| Auth0 JWT invalid or expired | 401 before the stream even opens | `require_user` dependency raises `HTTPException(401)` |
+| `auth0_domain` not set in env | Auth **disabled** — `require_user` returns `"dev"`. Safe for local dev, never deployed to staging | `auth.py` |
+| LLM call fails (API error) | Exception propagates, `error` SSE event, stream aborts. No retry at app level | Node code, propagated through `runner.py` |
+| Database (checkpointer) unavailable | `AsyncPostgresSaver` raises on checkpoint write; stream aborts | FastAPI lifespan catches startup failure; mid-stream fails hard |
+| CloudFront 60s idle timeout on slow search | **`with_heartbeat()` wrapper** in `runner.py` emits a `_heartbeat` sentinel event every 15s, resetting the idle timer without cancelling in-flight LLM calls | `runner.py` |
+
+---
+
+## 12. Interview prep — tradeoff justifications
+
+> These are the "why not X?" questions you'll get. Lead with the problem you were solving, then the tradeoff.
+
+**Why LangGraph instead of a plain function pipeline?**
+The HITL requirement forced it. `interrupt()` lets the graph pause mid-execution, survive a full HTTP round-trip (the frontend collect answers, the navigator POST to `/api/v1/resume`), and resume from the exact node — all with durable state in Postgres. A function pipeline would require hand-rolling that state machine. LangGraph also gave the `AsyncPostgresSaver` checkpointer for free, so conversation history and multi-turn continuity are built in.
+
+**Why MCP instead of calling the search DB directly from the agent?**
+Separation of concerns. The chat-api doesn't need to know about pgvector, Bedrock embeddings, or the SQL schema. The MCP server owns all of that, exposes a clean tool surface (7 tools), and can be scaled, replaced, or updated independently. It also means the search logic is reusable by other clients without exposing the DB.
+
+**Why NeMo Guardrails over a simple system prompt filter?**
+NeMo uses a declarative Colang policy file (`prompts.co`) that's completely separate from the agent graph. Updating guardrail rules doesn't touch graph code. The 30s fail-open timeout was also a deliberate UX choice — a blocked guardrails call shouldn't stall the navigator's workflow.
+
+**Why HTTP/1.1 forced on CloudFront instead of HTTP/2?**
+HTTP/2 multiplexing on CloudFront buffers SSE events rather than streaming them — the client receives chunks in batches, not as they arrive. Forcing HTTP/1.1 on the CloudFront → ALB leg restores standard SSE semantics. This is a non-obvious AWS gotcha, not a general HTTP/2 problem.
+
+**Why SSE over WebSockets?**
+The communication pattern is unidirectional — the server streams results to the client; the client sends discrete POST requests (not a continuous stream). SSE is simpler: it works through standard HTTP proxies, auto-reconnects, and doesn't require an upgrade handshake. WebSockets would add complexity with no benefit here.
+
+**Why Boto3 directly in the ingestion pipeline instead of LangChain's `BedrockEmbeddings`?**
+LangChain's wrapper has a built-in 4-attempt retry loop. Combined with the pipeline's own exponential-backoff-with-jitter retry, a single quota spike triggered 4 × 4 = 16 attempts per batch. Calling Bedrock via Boto3 directly collapses it to one predictable retry loop, which was also easier to tune for the 10 req/s steady-state quota.
+
+**Why tag nudges (score adjustments) instead of hard tag filters in `search_services`?**
+Hard filtering on categories and eligibilities would silently drop services that are semantically correct but not precisely tagged in the database. Tag coverage in OpenReferral-style data is inconsistent. Nudges (–0.10 for category match, –0.05 for eligibility match) let the vector search stay permissive — the right service still surfaces even if its tags are incomplete — while structured intent still outranks untagged results.
+
+**Why no ORM (no SQLAlchemy)?**
+The queries are too complex for an ORM to help. The ingestion pipeline's core query is 637 lines of SQL with 12 CTEs, lateral joins, window functions, and CASE-heavy eligibility remapping. Expressing that through an ORM would obscure the intent and fight the schema. For the chat-api, the queries are simpler but raw `psycopg` async keeps the stack minimal with no extra abstraction layer.
+
+**Why Flyway instead of Alembic?**
+Flyway is language-agnostic and runs as a standalone Docker container — no Python environment required to run migrations in CI or on a fresh deploy. Migration files are plain SQL, version-controlled, and never edited once applied. Alembic is tightly coupled to SQLAlchemy models, which aren't used here.
+
+**Why a separate `ClientContext` / `case_context` pattern instead of putting demographics on each Group?**
+A navigator is often describing multiple people in one conversation ("need shelter for a family with kids, and separately food for a senior"). Demographics often apply to everyone on a case (all are unhoused, all speak Spanish) — the `case_context` captures that once. Where one person differs, `group.client_context` overrides. `effective_context()` merges both at intake time. Without this, the navigator would have to re-specify demographics for every group.
+
+---
+
+## 13. Interview prep — what you'd improve
+
+**If I had more time, here's what I'd tackle first:**
+
+1. **Hard grounding instead of soft.** Right now the "no hallucination" constraint is prompt-only. An evaluator pass that checks the LLM's prose references against the raw tool results (e.g., every service name and address mentioned must appear in `results`) would make it a hard guarantee. The current soft constraint is good enough in practice but not provably safe.
+
+2. **`list_categories` / `list_eligibilities` caching.** These are called fresh on every intake — the data changes perhaps weekly. A short-lived in-process cache (5-minute TTL) would shave one round-trip per search without complicating the architecture.
+
+3. **Formal agent eval harness.** The test suite is 6 integration-level API tests. There's no golden-dataset eval for the agent's actual output quality — no benchmarks for classification accuracy, no grounding checks, no latency profiles. Without evals, regressions are invisible until a navigator complains.
+
+4. **Batched intake HITL across groups.** Currently, each group can trigger its own interrupt separately — a navigator could hit three intake forms in sequence for a three-group message. Batching all clarification questions for the same turn into one interrupt would be a better UX.
+
+5. **Observability at the application layer.** Langfuse, Grafana, and Sentry are wired at the infrastructure sidecar level (OTEL collector), but the chat-api code doesn't emit custom spans, doesn't tag LLM calls with trace IDs, and doesn't record intent classification latency or per-node timing. Adding `@observe()` decorators (Langfuse) to each node would unlock per-node latency breakdowns and LLM cost attribution.
+
+6. **ALB idle timeout for slow searches.** The ALB default is 60 seconds. A cold MCP search (cold pgvector + Bedrock embedding) can approach that. The heartbeat in `runner.py` solves the CloudFront side, but the ALB itself can still close the connection. Bumping the ALB idle timeout to 120s is a one-line CDK change that's flagged in the infra repo but not yet applied.
+
+7. **`resolve_intent` fallback quality.** When a message is ambiguous between `refine` and `new_search`, the classifier can misfire. Adding a confidence threshold with a clarification fallback (already wired as an intent) and a small golden-set evaluation for intent classification accuracy would catch this systematically.
+
+---
+
+## 14. Interview prep — numbers cheat sheet
+
+> Things to have ready. Mark ones you need to verify from the live system.
+
+| Metric | Value | Source |
+|--------|-------|--------|
+| LangGraph nodes | 13 | `app/agent/graph.py` |
+| Valid intents | 8 | `resolve_intent.py` |
+| MCP tools | 7 | `shelter-mcp-server/app/tools/` |
+| SSE event types | 13 | `runner.py` + `chat.py` |
+| Max search results returned | 50 per group | `search_services` SQL LIMIT |
+| Top results enriched with full details | 5 per group | `search_per_group.py` |
+| Max converse tool iterations | 3 | `converse.py` |
+| Heartbeat interval | 15s | `runner.py` `with_heartbeat()` |
+| Guardrails timeout | 30s | `guardrails/node.py` |
+| SF bounding box | lat 37.63–37.84 / lng –122.52 to –122.35 | `geo_check.py` |
+| Embedding dimensions | 1024 | Bedrock Titan v2 |
+| Ingestion embedding batch size | 25 | `ingestion-pipeline` config |
+| Ingestion Bedrock rate limit | 10 req/s | `ingestion-pipeline` |
+| Flyway migrations | 8 | `migrations/V1–V8` |
+| DB connection pool (MCP) | 2–10 connections | `app/tools/db.py` |
+| Fargate task sizes | chat-api: 1 vCPU / 2 GB; MCP: 0.5 vCPU / 1 GB | `shelter-infra` |
+| Fargate autoscale | 1–4 tasks at 70% CPU/mem | `shelter-infra` |
+| RDS instance (staging) | t3.micro, PostgreSQL 16 | `shelter-infra` |
+| CloudFormation stacks | 6 per environment | `shelter-infra/app.py` |
+| CDK repos | 5 total (network, db, mcp, agent, frontend + ingestion) | `shelter-infra` |
+| *(verify before interview)* Number of services in DB | — | run `SELECT COUNT(*) FROM service_snapshots` |
+| *(verify before interview)* Active navigators | — | check Auth0 tenant or ask |
+| *(verify before interview)* Typical search latency (p50) | — | Grafana dashboard |
+
+---
+
+## 15. Interview prep — testing strategy
+
+**What exists:**
+
+- `shelter-chat-api/tests/test_chat.py` — 6 async integration tests hitting the actual FastAPI app (real graph, mocked MCP responses). Covers: new conversation, multi-turn continuation, intake interrupt + resume, cancel, referral creation, auth bypass (`"dev"` user).
+- `shelter-mcp-server/tests/test_search.py` — unit/integration tests for `search_services` and `search_by_name` against a real test DB.
+- `shelter-search` CI — TypeScript lint + Vite build check on every PR (no component tests, no E2E).
+
+**What doesn't exist (honest gaps):**
+- No golden-dataset eval for agent output quality (intent classification accuracy, grounding correctness, rationale quality).
+- No load/latency tests.
+- No E2E browser tests for the React SPA.
+- No contract tests between the SSE event schema the backend emits and the frontend parser expects.
+
+**How you'd explain the testing philosophy:**
+The agent's correctness is hard to unit-test because it's LLM-dependent. The integration tests verify the API contract (events fire, state persists, auth enforces) but not the semantic quality of results. That's a deliberate gap — correctness at the LLM layer needs an eval harness with a ground-truth dataset of "navigator says X → expected groups/services", which is future work.
