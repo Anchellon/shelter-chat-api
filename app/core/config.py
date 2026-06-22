@@ -45,6 +45,10 @@ class Settings(BaseSettings):
             )
         return self
 
+    # OpenTelemetry — sidecar endpoint for trace export
+    otel_exporter_endpoint: str = "http://localhost:4318"
+    langfuse_environment: str = "staging"
+
     # CORS — comma-separated list of allowed origins
     cors_origins: str = "http://localhost:5173"
 

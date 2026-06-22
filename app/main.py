@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -29,6 +30,11 @@ async def lifespan(app: FastAPI):
     global mcp_client, mcp_tools, agent_graph
 
     logger.info("Starting up shelter-chat-api...")
+
+    # 0. Configure OTel export to the ADOT sidecar — Langfuse SDK reads this automatically
+    os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", settings.otel_exporter_endpoint)
+    os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", settings.langfuse_environment)
+    logger.info(f"OTel exporter endpoint: {settings.otel_exporter_endpoint}")
 
     # 1. Init checkpointer — creates LangGraph tables in Postgres if needed
     checkpointer = await init_checkpointer()
