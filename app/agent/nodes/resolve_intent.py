@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agent.llm import get_llm
 from app.agent.state import NavigatorState
 from app.core.config import settings
+from app.core.metrics import record_turn
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,7 @@ async def resolve_intent_node(state: NavigatorState) -> dict:
         + (f", queue={intent_queue}" if intent_queue else "")
         + (f", pending_action={pending_action} cleared" if pending_action else "")
     )
+    record_turn(intent)
 
     return {
         "intent": intent,

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,7 @@ from langfuse.langchain import CallbackHandler
 from app.agent.runner import stream_agent
 from app.core.auth import require_user
 from app.core.db import create_referral, save_conversation_summary
+from app.core.metrics import record_hitl_interrupt, record_turn_duration
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ class ChatRequest(BaseModel):
 async def _sse_generator(question: str, conversation_id: str, current_time: str, graph, config: dict):
     msg_id = f"msg_{uuid.uuid4().hex[:8]}"
     chunk_count = 0
+    turn_start = time.monotonic()
 
     logger.info(f"SSE start — msg={msg_id}, conv={conversation_id}")
     yield f"data: {json.dumps({'type': 'text-start', 'id': msg_id})}\n\n"
@@ -145,6 +148,8 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                         user_id=config["metadata"]["user_id"],
                         title=question,
                     )
+                    record_hitl_interrupt("context_clarify_request")
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "hitl_interrupt")
                     return  # stream ends here — frontend resumes via POST /chat/resume
 
                 elif event["type"] == "intake_request":
@@ -154,15 +159,19 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
                         user_id=config["metadata"]["user_id"],
                         title=question,
                     )
+                    record_hitl_interrupt("intake_request")
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "hitl_interrupt")
                     return  # stream ends here — frontend resumes via POST /chat/resume
 
                 elif event["type"] == "error":
                     yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "error")
                     return
 
     except Exception as e:
         logger.error(f"Stream error (conv={conversation_id}): {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'errorText': str(e)})}\n\n"
+        record_turn_duration((time.monotonic() - turn_start) * 1000, "error")
         return
 
     await save_conversation_summary(
@@ -171,6 +180,7 @@ async def _sse_generator(question: str, conversation_id: str, current_time: str,
         title=question,
     )
     logger.info(f"SSE end — msg={msg_id}, {chunk_count} chunks")
+    record_turn_duration((time.monotonic() - turn_start) * 1000, "success")
     yield f"data: {json.dumps({'type': 'text-end', 'id': msg_id})}\n\n"
     yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
 

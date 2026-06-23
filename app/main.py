@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.checkpointer import close_checkpointer, init_checkpointer
+from app.core.metrics import init_metrics
 from app.core.mcp_client import MCPClient
 from app.agent.graph import build_graph
 from app.api.chat import router as chat_router
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", settings.otel_exporter_endpoint)
     os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", settings.langfuse_environment)
     logger.info(f"OTel exporter endpoint: {settings.otel_exporter_endpoint}")
+    init_metrics(settings.otel_exporter_endpoint)
 
     # 1. Init checkpointer — creates LangGraph tables in Postgres if needed
     checkpointer = await init_checkpointer()

@@ -1,7 +1,9 @@
 import json
 import logging
+import time
 
 from app.agent.state import NavigatorState
+from app.core.metrics import record_mcp_search_duration
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +106,13 @@ def build_search_per_group_node(tools_by_name: dict):
                 args["when"] = group["when"]
 
             logger.info(f"search_per_group: group_id={group_id}, args={args}")
-            raw = await search_tool.ainvoke(args)
+            _t0 = time.monotonic()
+            try:
+                raw = await search_tool.ainvoke(args)
+                record_mcp_search_duration((time.monotonic() - _t0) * 1000, "success")
+            except Exception:
+                record_mcp_search_duration((time.monotonic() - _t0) * 1000, "error")
+                raise
             results[group_id] = _parse_tool_result(raw)
             logger.info(f"search_per_group: group_id={group_id} → {len(results[group_id])} results")
 

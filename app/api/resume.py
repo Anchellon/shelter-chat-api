@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -15,6 +16,7 @@ from app.agent.runner import stream_resume
 from app.api.chat import with_heartbeat
 from app.core.auth import require_user
 from app.core.db import create_referral, save_conversation_summary
+from app.core.metrics import record_hitl_interrupt, record_turn_duration
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
 
     msg_id = f"msg_{uuid.uuid4().hex[:8]}"
     has_text = False
+    turn_start = time.monotonic()
 
     try:
         with propagate_attributes(
@@ -80,9 +83,13 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                     )
                 elif event["type"] == "intake_request":
                     yield f"data: {json.dumps(event)}\n\n"
+                    record_hitl_interrupt("intake_request")
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "hitl_interrupt")
                     return
                 elif event["type"] == "context_clarify_request":
                     yield f"data: {json.dumps(event)}\n\n"
+                    record_hitl_interrupt("context_clarify_request")
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "hitl_interrupt")
                     return
                 elif event["type"] == "context_updated":
                     payload = {"type": "context_updated"}
@@ -97,14 +104,17 @@ async def _sse_resume_generator(request: ResumeRequest, graph, config: dict):
                     yield f"data: {json.dumps({'type': 'tool-end', 'tool': event['tool']})}\n\n"
                 elif event["type"] == "error":
                     yield f"data: {json.dumps({'type': 'error', 'errorText': event.get('errorText', 'unknown error')})}\n\n"
+                    record_turn_duration((time.monotonic() - turn_start) * 1000, "error")
                     return
     except Exception as e:
         logger.error(f"Resume stream error (conv={request.conversation_id}): {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'errorText': str(e)})}\n\n"
+        record_turn_duration((time.monotonic() - turn_start) * 1000, "error")
         return
 
     if has_text:
         yield f"data: {json.dumps({'type': 'text-end', 'id': msg_id})}\n\n"
+    record_turn_duration((time.monotonic() - turn_start) * 1000, "success")
     yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
 
 
